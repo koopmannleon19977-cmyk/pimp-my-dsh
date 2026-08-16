@@ -64,8 +64,9 @@ mod desktop_app {
     }
 
     #[tauri::command]
-    fn open_harness() -> Result<(), String> {
-        commands::open_harness()
+    fn open_harness(app: tauri::AppHandle) -> Result<(), String> {
+        let url = commands::validated_endpoint()?;
+        open_harness_window(&app, &url)
     }
 
     #[tauri::command]
@@ -90,6 +91,28 @@ mod desktop_app {
         }
     }
 
+    fn open_harness_window(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+        use tauri::WebviewWindowBuilder;
+        use tauri::WebviewUrl;
+        let url =
+            tauri::Url::parse(url).map_err(|e| format!("invalid endpoint: {e}"))?;
+        if let Some(window) = app.get_webview_window("harness") {
+            window
+                .navigate(url)
+                .map_err(|e| format!("navigate harness window: {e}"))?;
+            let _ = window.show();
+            let _ = window.set_focus();
+            return Ok(());
+        }
+        WebviewWindowBuilder::new(app, "harness", WebviewUrl::External(url))
+            .title("Pimp my DSH")
+            .inner_size(1200.0, 800.0)
+            .min_inner_size(800.0, 600.0)
+            .build()
+            .map(|_| ())
+            .map_err(|e| format!("create harness window: {e}"))
+    }
+
     pub fn run() {
         tauri::Builder::default()
             // Must be the first plugin so duplicate launches cannot initialize
@@ -109,10 +132,14 @@ mod desktop_app {
                 Ok(())
             })
             .on_window_event(|window, event| {
-                // Close-to-tray: hide instead of destroying the controller.
+                // Close-to-tray only for the controller window. The harness
+                // product window closes (destroys) and is recreated on demand;
+                // the supervisor/Job continues either way.
                 if let WindowEvent::CloseRequested { api, .. } = event {
-                    let _ = window.hide();
-                    api.prevent_close();
+                    if window.label() == "main" {
+                        let _ = window.hide();
+                        api.prevent_close();
+                    }
                 }
             })
             .invoke_handler(tauri::generate_handler![
@@ -192,7 +219,8 @@ mod desktop_app {
                     let _ = commands::stop_harness();
                 }
                 "open" => {
-                    let _ = commands::open_harness();
+                    let _ = commands::validated_endpoint()
+                        .and_then(|url| open_harness_window(app, &url));
                 }
                 "reveal" => {
                     let _ = commands::reveal_log_folder();

@@ -146,9 +146,9 @@ the cost of shipping browser patches themselves.
 **JavaScript is a view only.** The React frontend (`apps/desktop/`) has
 **zero** Tauri capabilities: no `shell`, no `opener`, no `filesystem`, no
 `updater`. All spawning authority exists only in Rust. The controller
-webview loads only bundled assets under strict CSP. The harness web UI
-opens in the system browser or a separate zero-capability webview — never
-inside the privileged controller webview.
+webview loads only bundled assets under strict CSP. The harness web UI renders
+in a second, embedded, **zero-capability** webview (label `harness`) — the
+primary product surface — never inside the privileged controller webview.
 
 ### IPC: Rust to React
 
@@ -162,7 +162,7 @@ accepted values are closed enums or ranges.
 | `start_harness` | Begin a supervised run |
 | `stop_harness` | Gracefully or forcibly stop a run |
 | `run_doctor` | Delegate to `pimp-dsh doctor` |
-| `open_harness` | Open the harness web UI (Rust constructs the READY URL) |
+| `open_harness` | Open/refocus the embedded zero-capability `harness` webview (Rust constructs the READY URL) |
 | `reveal_log_folder` | Open the log directory in File Explorer |
 | `set_theme` | Change the UI theme |
 | `set_fixed_port` | Opt into a fixed port instead of dynamic |

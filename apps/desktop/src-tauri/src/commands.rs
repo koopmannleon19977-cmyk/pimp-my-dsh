@@ -42,10 +42,11 @@ pub fn run_doctor() -> Result<(), String> {
     supervisor().run_doctor()
 }
 
-/// Open the validated READY/RUNNING endpoint. The endpoint is constructed in
-/// Rust from the current snapshot; no renderer argument is accepted.
-pub fn open_harness() -> Result<(), String> {
-    supervisor().open()
+/// Return the validated READY/RUNNING endpoint (fail closed otherwise). The
+/// endpoint is constructed in Rust from the current snapshot; no renderer
+/// argument is accepted. Opening the window is the Tauri layer's concern.
+pub fn validated_endpoint() -> Result<String, String> {
+    supervisor().validated_endpoint()
 }
 
 pub fn reveal_log_folder() -> Result<(), String> {
@@ -82,5 +83,12 @@ mod tests {
         assert!(set_theme(Theme::Dark).is_ok());
         let snap = get_snapshot();
         assert_eq!(snap.settings.theme, Theme::Dark);
+    }
+
+    #[test]
+    fn validated_endpoint_fails_closed_when_not_running() {
+        let _ = init_supervisor();
+        // A fresh supervisor is Stopped: opening must fail closed.
+        assert!(validated_endpoint().is_err());
     }
 }

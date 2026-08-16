@@ -1,6 +1,6 @@
 //! The full lifecycle orchestrator: owns the state machine, the live Job/process
-//! handles, the bridge, bounded logs, and the browser-open decision. JavaScript
-//! is a view; every authority path is constructed here.
+//! handles, the bridge, bounded logs, and the validated READY endpoint decision.
+//! JavaScript is a view; every authority path is constructed here.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -224,8 +224,10 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Open the validated READY/RUNNING endpoint in the system browser.
-    pub fn open(&self) -> Result<(), String> {
+    /// Return the validated READY/RUNNING endpoint, or fail closed. Opening
+    /// (embedded window vs. anything else) is the Tauri layer's concern; the
+    /// lifecycle core only decides what endpoint may be opened.
+    pub fn validated_endpoint(&self) -> Result<String, String> {
         let endpoint = {
             let res = self.resources.lock().expect("resources lock");
             if !crate::types::state_allows_open(self.state.state()) {
@@ -233,8 +235,7 @@ impl Supervisor {
             }
             res.endpoint.clone()
         };
-        let endpoint = endpoint.ok_or("no validated endpoint")?;
-        browser::open_url(&endpoint).map_err(|e| format!("open failed: {e}"))
+        endpoint.ok_or_else(|| "no validated endpoint".to_string())
     }
 
     /// Reveal the on-disk log folder.

@@ -256,7 +256,7 @@ structured health reporting — all on Windows 10/11 x64.
 
 - **No shell plugin in the renderer.** JavaScript has no `shell`, `opener`, `filesystem`, or `updater` capabilities. Spawning exists only in Rust.
 - **No telemetry, no LAN, no daemon.** The controller sends no machine data and never runs as a Windows service.
-- **No logged-in browser or desktop automation.** The controller opens the harness web UI in the system browser (or a zero-capability webview), never inside the privileged controller webview.
+- **No logged-in browser or desktop automation.** The controller renders the harness web UI in an embedded zero-capability webview (never inside the privileged controller webview); it does not drive a logged-in browser.
 - **No unsigned installer for production.** The locally built NSIS `*-setup.exe` has no Authenticode signature and is a development artifact only. Production releases require dual Authenticode + Tauri update signatures.
 
 ### Architecture in brief
