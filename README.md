@@ -16,15 +16,17 @@ upstream plugin bundles through a patch layer and a single distribution-owned
 plugin, then wraps them in a small CLI that owns setup, run, and diagnosis.
 
 It does **not** reimplement upstream native tools. Read, search, edit, pwsh,
-sessions, skills, todo, and subagents all come from the upstream bundle. The
-distribution's job is composition and hardening, not duplication.
+sessions, skills, todo, and ordinary subagents come from the upstream bundle.
+Distribution code composes and hardens them and adds an isolated-worktree
+provider where the upstream request seam has no per-child workspace override.
 
 ## What this is not
 
 - **Not a fork.** Upstream is consumed as a published npm artifact. See
   [ADR-0001](docs/adr/0001-no-fork.md).
-- **Not a browser or GitHub automation tool.** Web fetch, web search, and
-  browser automation are disabled. There is no GitHub write automation.
+- **Not a logged-in browser or GitHub automation tool.** Web fetch and web
+  search stay disabled. Browser automation is isolated, headless, and opt-in;
+  there is no existing-profile control or GitHub write automation.
 - **Not a full sandbox.** On Windows, the sandbox restricts writes only and is
   explicitly partial. See [Security model](docs/security-model.md).
 
@@ -36,6 +38,22 @@ distribution's job is composition and hardening, not duplication.
 - **PowerShell** (Windows shell backend; bash is disabled on Windows).
 
 Install pnpm separately; Node.js 25+ no longer bundles Corepack.
+
+### Supported runtime matrix
+
+| Host | Architecture | Node.js | Status |
+| --- | --- | --- | --- |
+| Windows 10/11 | x64 | 22.19, 24, 26 | Primary; CI matrix plus local Windows 11 smoke |
+| Ubuntu (`ubuntu-latest`) | x64 | 22.19, 24, 26 | Secondary; CI matrix |
+| macOS | any | any | Unsupported and unverified |
+| Windows/Linux | arm64 | any | Unsupported and unverified |
+
+All rows use pnpm `11.7.0`, DeepSeek Harness `0.1.0-rc.6`, and the exact
+dependencies in `pnpm-lock.yaml`. The package engine range permits later
+Node.js releases, but they are not promoted to the verified matrix until CI
+covers them. Browser automation uses the pinned Playwright MCP package and
+remains opt-in. See [Windows support](docs/windows-support.md) for shell,
+sandbox, process, LSP, and persistent-terminal limitations.
 
 ## Install from GitHub
 
@@ -62,6 +80,10 @@ dependencies with package hooks and lifecycle scripts disabled, then moves it
 under `DSH_HOME`. It rejects redirected paths and existing unmanaged profiles.
 `--force` atomically replaces only a profile previously owned by this
 distribution; it does not preserve additional dependencies or bundles.
+
+On Windows, `pimp-dsh setup --profile windows` installs the headless Windows
+baseline. Platform-gated base rows select PowerShell, disable Bash, and mount
+the ACL write-confinement backend automatically.
 
 ## Run
 
@@ -103,7 +125,9 @@ pnpm pimp-dsh update-check
 ```
 
 Reports whether a newer `pimp-my-dsh` release is available. It makes no
-telemetry request and sends no data about your machine.
+telemetry request, sends no machine data, and never installs automatically.
+Updates remain an explicit package-manager action so the exact version and
+artifact can be reviewed before profile migration.
 
 ## Migrate
 
@@ -112,8 +136,10 @@ pnpm pimp-dsh migrate --profile web          # dry run (default)
 pnpm pimp-dsh migrate --profile web --apply  # apply
 ```
 
-`migrate` upgrades a profile's patch data to the current distribution format.
-It is a dry run unless `--apply` is passed.
+`migrate` validates the distribution ownership marker, reports source and
+target bundle versions, and is a dry run unless `--apply` is passed. Applying a
+required migration installs the complete current profile in staging and swaps
+it atomically; it never patches an unowned profile or downgrades a newer one.
 
 ## Configuration
 
@@ -132,6 +158,7 @@ variables.
 | `PIMP_DSH_BASE_URL` | Base URL for the configured model provider. |
 | `PIMP_DSH_MODEL` | Model identifier. |
 | `PIMP_DSH_ENABLE_LSP` | Explicit opt-in for language-server navigation. |
+| `PIMP_DSH_ENABLE_BROWSER` | Explicit opt-in for isolated headless Chrome automation. |
 
 The upstream `DSH_PERMISSION_MODE` variable is disclosed for completeness, but
 the shipped profiles own safe defaults. The wrapper forces
@@ -160,16 +187,41 @@ Full details: [docs/windows-support.md](docs/windows-support.md).
 | Read / search / edit workspace files | Enabled (upstream) |
 | PowerShell execution | Enabled, write-confined (partial) |
 | Bash execution | Disabled on Windows |
-| Sessions / skills / todo / subagents | Enabled (upstream) |
+| Sessions / skills / todo | Enabled (upstream) |
+| Parallel subagents | Enabled (native fresh children; four-call pool; depth 3) |
+| Isolated subagents | Enabled (`subagent_worktree`; one-shot, approval-gated, retained branch) |
 | Scoped Git status / diff / log | Enabled (`pimp_git_read`, read-only) |
 | Durable memory | Enabled (`pimp_memory`, append-only under `DSH_HOME`) |
+| GitHub repository / issue / PR / file reads | Enabled (`pimp_github_read`, fixed read operations) |
 | Telemetry | Disabled unconditionally |
 | Web fetch / search | Disabled (SSRF risk) |
-| Browser automation | Disabled |
+| Browser automation | Opt-in, isolated Chrome; risk-gated, unsafe server code denied |
 | LSP navigation | Opt-in, unsandboxed |
 | Community plugins | Reviewed allowlist gate only |
 
 Full matrix: [docs/capabilities.md](docs/capabilities.md).
+
+Browser automation uses Microsoft's pinned `@playwright/mcp` through the
+first-party DSH MCP client. It starts a fresh in-memory, headless Chrome
+profile, blocks service workers, omits image payloads, and receives no provider
+credentials. Page content remains untrusted. Only bounded inspection tools run
+without approval. Navigation, clicks, typing, uploads, script evaluation,
+storage access, unknown future browser tools, and other stateful operations
+enter the approval pipeline; profiles without an interactive answerer fail
+closed. Arbitrary code execution in the unsandboxed browser server is denied.
+Browser network egress is not confined, so the capability remains disabled
+unless `PIMP_DSH_ENABLE_BROWSER=1`.
+
+`subagent_worktree` creates a unique branch and worktree under
+`DSH_HOME/pimp-my-dsh/worktrees`, initializes its index from `HEAD`, and copies
+the current contents of tracked workspace files without copying untracked
+files. Sparse/skip-worktree indexes, non-UTF-8 index paths, submodules, linked
+directory ancestors, and tracked links that are dangling or escape the
+repository fail closed. The child runs there under the inherited sandbox mode
+with approval
+pinned to `never`. The worktree and branch remain for human review; nothing is
+merged or deleted automatically. Worktree creation itself requires an
+interactive approval channel.
 
 ## Upstream version pin
 

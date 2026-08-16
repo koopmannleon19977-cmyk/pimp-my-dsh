@@ -2,9 +2,10 @@
 
 `pimp-my-dsh` is a thin distribution over DeepSeek Harness. It composes the
 upstream plugin bundles through a patch layer and one distribution-owned plugin.
-That plugin adds two narrow capabilities: fixed-argument, read-only Git
-inspection and append-only durable memory. All other execution authority is
-inherited from upstream and narrowed by this distribution's configuration.
+That plugin adds fixed-argument Git and GitHub reads, append-only durable
+memory, approval policy, and the isolated-worktree subagent provider. All other
+execution authority is inherited from upstream and narrowed by this
+distribution's configuration.
 
 This document is the authoritative statement of that posture. It is honest about
 what is and is not a boundary.
@@ -38,9 +39,10 @@ Git config, pagers, hooks, fsmonitor, signature programs, credential helpers,
 external diff/text conversion, and lazy object fetching are disabled.
 Repository-declared clean/process filters are enumerated and neutralized before
 `status` or `diff`; unsupported filter names fail closed. Success and error
-output are capped at 16,000 characters. The canonical process working directory
-must be the repository root. Arbitrary arguments and mutating operations are
-outside the schema.
+output are capped at 16,000 characters. The calling agent's canonical workspace
+must be the repository root; worktree children therefore inspect their own
+branch rather than the harness process directory. Arbitrary arguments and
+mutating operations are outside the schema.
 
 `pimp_memory` writes newline-delimited JSON only to the canonical private
 directory `DSH_HOME/pimp-my-dsh/memory.jsonl`. The directory and log must be
@@ -51,6 +53,22 @@ using that harness home. Any of those sessions can recall its records, so notes
 must not contain credentials or sensitive values. This is a trusted
 distribution-plugin write outside the workspace sandbox, not model-selected
 filesystem access.
+
+## Isolated worktree delegation
+
+`subagent_worktree` requires one-call approval before it mutates repository
+metadata. It creates a random `pimp-agent/` branch under the canonical
+`DSH_HOME/pimp-my-dsh/worktrees` root, initializes the child index from `HEAD`,
+and copies the current contents of index-tracked files. Every mutating Git
+command runs with a private empty hooks directory; checkout and content filters
+never run. Untracked files are not copied. Sparse/skip-worktree indexes,
+non-UTF-8 index paths, submodules, linked directory ancestors, and links that
+are dangling or escape the repository fail closed.
+
+The child receives the worktree as its session workspace, inherits the parent's
+sandbox mode, and has approval pinned to `never`. The provider never merges or
+deletes a successful child. It returns the retained path and branch on normal,
+child-level, and infrastructure failure so a human can review and remove them.
 
 ## Telemetry: disabled unconditionally
 
@@ -99,23 +117,32 @@ writes are denied except for the documented boundaries above. Escalation to
 model or plugin.** The sandbox reduces accidental or careless writes; it does
 not contain a determined adversary.
 
-## Web fetch and browser automation: disabled
+## Web fetch disabled; browser automation isolated and opt-in
 
 The upstream HTTP fetch provider (`@deepseek-ai/dsh-web-fetch-http`) is an
 **SSRF primitive**: it does not block private, loopback, link-local, multicast,
 or otherwise non-public destinations, and it does not perform
-DNS-resolve-then-validate. Until such protection exists, it must not be enabled
-in a deployment that can reach sensitive internal network targets.
+DNS-resolve-then-validate. It remains disabled together with `web_search`.
 
-This distribution:
+Browser automation is a separate, explicit capability. Setting
+`PIMP_DSH_ENABLE_BROWSER=1` starts the exact-pinned Microsoft Playwright MCP
+server through the first-party DSH MCP client with these controls:
 
-- Does not enable `web_fetch` or `web_search`.
-- Does not enable any browser automation.
-- Has no safe public-network provider configured.
+- A fresh in-memory, headless Google Chrome profile; no existing login state.
+- The MCP child's ambient environment is scrubbed of DSH and credential-shaped
+  variables.
+- Service workers are blocked, image responses are omitted, and browser output
+  is bounded under `DSH_HOME`.
+- Only bounded, non-credential inspection tools may run directly.
+- Navigation, interactions, storage access, and every unknown future browser
+  tool require one-call approval. Without an approval answerer they fail closed.
+- Arbitrary JavaScript in the unsandboxed browser server is denied.
 
-There is no supported way to turn these on in this distribution. If a future
-upstream release ships a safe provider, that would be a roadmap item, not a
-silent enablement.
+These controls do **not** confine browser network egress and the Playwright
+origin filters are not a security boundary across redirects. Do not enable
+browser automation where Chrome can reach sensitive internal services. The
+distribution does not support logged-in profile control or desktop computer
+use.
 
 ## LSP: explicit opt-in, unsandboxed
 

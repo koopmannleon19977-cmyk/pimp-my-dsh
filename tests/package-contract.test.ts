@@ -1,6 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CORDIS_PATCH, PROFILES_DIR, readPackageJson, readText } from "./helpers";
+import { CORDIS_PATCH, PROFILES_DIR, ROOT, readPackageJson, readText } from "./helpers";
 
 const PIN = "0.1.0-rc.6";
 
@@ -11,6 +12,39 @@ describe("package.json contract", () => {
     expect(pkg.name).toBe("pimp-my-dsh");
     expect(pkg.version).toBe("0.1.0");
     expect(pkg.license).toBe("MIT");
+  });
+
+  it("publishes under the canonical public repository identity", () => {
+    expect(pkg.repository).toEqual({
+      type: "git",
+      url: "git+https://github.com/koopmannleon19977-cmyk/pimp-my-dsh.git",
+    });
+    expect(pkg.homepage).toBe("https://github.com/koopmannleon19977-cmyk/pimp-my-dsh#readme");
+    expect(pkg.bugs).toEqual({
+      url: "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh/issues",
+    });
+    expect(pkg.publishConfig).toEqual({ access: "public", provenance: true });
+  });
+
+  it("ships a versioned ownership manifest schema aligned with every profile", () => {
+    const schema = JSON.parse(readText(join(ROOT, "schema", "manifest-v1.schema.json"))) as {
+      additionalProperties: boolean;
+      properties: {
+        schemaVersion: { const: number };
+        bundleVersion: { const: string };
+        upstreamVersion: { const: string };
+        profile: { enum: string[] };
+      };
+    };
+    const profiles = readdirSync(PROFILES_DIR)
+      .filter((name) => name.endsWith(".patch.yml"))
+      .map((name) => name.replace(/\.patch\.yml$/, ""))
+      .sort();
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties.schemaVersion.const).toBe(1);
+    expect(schema.properties.bundleVersion.const).toBe(pkg.version);
+    expect(schema.properties.upstreamVersion.const).toBe(PIN);
+    expect([...schema.properties.profile.enum].sort()).toEqual(profiles);
   });
 
   it("is ESM with the documented entry points", () => {

@@ -50,6 +50,16 @@ an exact runtime dependency. The CLI invokes its JavaScript entry directly for
 portable, shell-free profile installation; it does not rely on Corepack being
 bundled with the host Node.js release.
 
+## Browser automation dependencies
+
+The opt-in browser capability uses
+[`@playwright/mcp@0.0.79`](https://github.com/microsoft/playwright-mcp)
+and its Playwright runtime, published by Microsoft under the Apache License
+2.0. It is connected through the first-party
+`@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` (MIT). The integration starts the
+locally installed Google Chrome channel and does not redistribute a browser
+binary.
+
 ## Direct runtime dependencies of `@deepseek-ai/dsh@0.1.0-rc.6`
 
 The upstream CLI package declares the following non-`@deepseek-ai` direct

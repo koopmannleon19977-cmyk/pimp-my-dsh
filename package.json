@@ -3,6 +3,24 @@
   "version": "0.1.0",
   "description": "A Windows-first distribution of DeepSeek Harness with safe feasibility prototype",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/koopmannleon19977-cmyk/pimp-my-dsh.git"
+  },
+  "homepage": "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh#readme",
+  "bugs": {
+    "url": "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "agent-harness",
+    "windows"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "type": "module",
   "main": "dist/plugin.js",
   "bin": {
@@ -38,11 +56,16 @@
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
     "@deepseek-ai/dsh-lsp": "0.1.0-rc.6",
     "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subagent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subagent-in-process-driver": "0.1.0-rc.6",
     "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@playwright/mcp": "0.0.79",
     "pnpm": "11.7.0"
   },
   "devDependencies": {

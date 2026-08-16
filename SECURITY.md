@@ -60,12 +60,20 @@ runner (`@deepseek-ai/dsh-sandbox-windows-acl`). This mechanism restricts
 This is a write-boundary sandbox, not a full isolation boundary. Do not treat a
 confined session as a security boundary against a malicious model or plugin.
 
-### Web fetch and browser automation are disabled
+### Web fetch stays disabled; browser automation is isolated opt-in
 
 The upstream HTTP fetch provider is an **SSRF primitive**: it does not block
 private, loopback, link-local, or multicast destinations. This distribution
-does not enable `web_fetch`, `web_search`, or any browser automation. There is
-no safe public-network provider configured, so these capabilities stay off.
+does not enable `web_fetch` or `web_search`.
+
+`PIMP_DSH_ENABLE_BROWSER=1` separately enables the pinned Microsoft Playwright
+MCP server. It uses an in-memory headless Chrome profile, receives the MCP
+client's credential-scrubbed environment and blocks service workers. Only a
+small allowlist of bounded inspection tools runs directly. Navigation,
+interactions, storage access, and unknown future browser tools require approval
+and fail closed without an answerer. Arbitrary code execution in the
+unsandboxed browser server is denied. Browser network egress is **not confined**.
+Do not enable it where the browser could reach sensitive internal services.
 
 ### LSP is explicit opt-in and unsandboxed
 
@@ -82,6 +90,34 @@ plugins. A community plugin enters the distribution only through the
 version, permission surface, and Windows behavior, then pins it to an exact
 version in the allowlist. There is no implemented plugin registry and no
 automatic plugin discovery.
+
+### GitHub integration is read-only
+
+`pimp_github_read` resolves `gh` from an absolute executable path outside the
+workspace and exposes only fixed GET operations for repositories, issues, pull
+requests, UTF-8 files, and bounded searches. It uses the GitHub CLI's normal
+host credential store without returning tokens to the model. GitHub writes,
+arbitrary API paths, alternate hosts, extensions, and caller-supplied CLI
+arguments are outside the tool schema.
+
+### Delegated agents cannot prompt for more authority
+
+Ordinary parallel subagents use DSH's native in-process `spawn` provider, with
+independent sessions and the parent's workspace. DSH snapshots the parent's
+sandbox override at delegation and pins each child's approval policy to `never`;
+an unattended child therefore cannot widen authority through an approval
+prompt. The distribution caps each rolling parallel-safe tool pool at four
+calls and delegation depth at three.
+
+`subagent_worktree` is a separate one-shot provider. Creating it requires
+approval because `git worktree add` mutates repository metadata. It creates a
+unique branch under `pimp-agent/`, initializes the child index from `HEAD`, and
+copies only currently tracked workspace paths. Repository hooks and checkout
+filters are suppressed. Untracked files are excluded; sparse/skip-worktree
+indexes, non-UTF-8 index paths, submodules, linked directory ancestors, and
+tracked links that are dangling or escape the repository fail closed. Nothing
+is merged or deleted automatically. The retained path and branch are returned
+for explicit review and cleanup, including on child infrastructure failure.
 
 ## Secrets handling
 

@@ -11,16 +11,18 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 
 const VERSION = '0.1.0'
 const UPSTREAM_VERSION = '0.1.0-rc.6'
+const PLAYWRIGHT_MCP_VERSION = '0.0.79'
 const PROFILE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
+const playwrightMcpCli = join(dirname(require.resolve('@playwright/mcp/package.json')), 'cli.js')
 
 type Output = Record<string, unknown>
 type Environment = NodeJS.ProcessEnv
@@ -76,7 +78,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
 }
 
 function dshHome(): string {
-  return resolve(process.env.DSH_HOME ?? join(homedir(), '.dsh'))
+  return resolveDshHome()
 }
 
 function profileSource(profile: string): string {
@@ -162,6 +164,11 @@ function profileManifest(profile: string): ProfileManifest {
     packageManager: 'pnpm@11.7.0',
     dependencies: {
       'pimp-my-dsh': `link:${packageRoot.replaceAll('\\', '/')}`,
+      '@deepseek-ai/dsh-lsp': UPSTREAM_VERSION,
+      '@deepseek-ai/dsh-lsp-stdio': UPSTREAM_VERSION,
+      '@deepseek-ai/dsh-tool-lsp': UPSTREAM_VERSION,
+      '@deepseek-ai/dsh-mcp-client': UPSTREAM_VERSION,
+      '@playwright/mcp': PLAYWRIGHT_MCP_VERSION,
     },
     dsh: { profile: { bundles: [...templateBundles(profile), 'pimp-my-dsh'] } },
   }
@@ -206,27 +213,35 @@ function harnessEnvironment(): Environment {
     ['PIMP_DSH_BASE_URL', 'DSH_PIMP_BASE_URL'],
     ['PIMP_DSH_MODEL', 'DSH_PIMP_MODEL'],
     ['PIMP_DSH_ENABLE_LSP', 'DSH_PIMP_ENABLE_LSP'],
+    ['PIMP_DSH_ENABLE_BROWSER', 'DSH_PIMP_ENABLE_BROWSER'],
   ] as const
   for (const [publicName, protectedName] of promotions) {
     const value = environment[publicName]
     if (value !== undefined) environment[protectedName] = value
     delete environment[publicName]
   }
+  environment.DSH_PIMP_BROWSER_CLI = playwrightMcpCli
   environment.DSH_TELEMETRY_DISABLED = '1'
   delete environment.DSH_TELEMETRY_MODE
   delete environment.DSH_TELEMETRY_OTLP_URL
   return environment
 }
 
-function assertOwnedProfile(directory: string, profile: string): void {
+interface OwnershipMarker {
+  schemaVersion: 1
+  bundleVersion: string
+  upstreamVersion: string
+  profile: string
+}
+
+function assertOwnedProfile(directory: string, profile: string): OwnershipMarker {
   const markerPath = join(directory, '.pimp-my-dsh.json')
   if (!existsSync(markerPath)) throw new Error(`refusing to replace unmanaged profile: ${profile}`)
-  const installed = JSON.parse(readFileSync(markerPath, 'utf8')) as {
-    schemaVersion?: unknown
-    bundleVersion?: unknown
-    upstreamVersion?: unknown
-    profile?: unknown
+  const markerEntry = lstatSync(markerPath)
+  if (markerEntry.isSymbolicLink() || !markerEntry.isFile() || markerEntry.nlink !== 1) {
+    throw new Error(`refusing to replace profile with an unsafe ownership marker: ${profile}`)
   }
+  const installed = JSON.parse(readFileSync(markerPath, 'utf8')) as Partial<OwnershipMarker>
   if (
     installed.schemaVersion !== 1
     || typeof installed.bundleVersion !== 'string'
@@ -235,6 +250,7 @@ function assertOwnedProfile(directory: string, profile: string): void {
   ) {
     throw new Error(`refusing to replace profile with an invalid ownership marker: ${profile}`)
   }
+  return installed as OwnershipMarker
 }
 
 function assertManagedProfileDirectory(directory: string, profile: string): void {
@@ -312,12 +328,11 @@ function installStagedProfile(directory: string, profile: string, source: string
   assertManagedProfileDirectory(directory, profile)
 }
 
-function setup(args: ParsedArgs): void {
-  const profile = args.profile ?? ''
+function installProfile(profile: string, force: boolean): void {
   const source = profileSource(profile)
   const directory = profileDirectory(profile)
   if (existsSync(directory)) {
-    if (!args.force) {
+    if (!force) {
       throw new Error(`profile directory already exists: ${directory}; pass --force to replace it`)
     }
     assertOwnedProfile(directory, profile)
@@ -349,6 +364,11 @@ function setup(args: ParsedArgs): void {
     rmSync(staging, { recursive: true, force: true })
     throw error
   }
+}
+
+function setup(args: ParsedArgs): void {
+  const profile = args.profile ?? ''
+  installProfile(profile, args.force)
   emit({ command: 'setup', profile, installed: true, upstreamVersion: UPSTREAM_VERSION }, args.json)
 }
 
@@ -463,21 +483,24 @@ async function updateCheck(args: ParsedArgs): Promise<void> {
 function migrate(args: ParsedArgs): void {
   const profile = args.profile ?? ''
   const directory = profileDirectory(profile)
-  const patch = join(directory, 'cordis.patch.yml')
-  if (!existsSync(patch)) throw new Error(`profile is not installed: ${profile}`)
-  const result = {
+  if (!existsSync(directory)) throw new Error(`profile is not installed: ${profile}`)
+  const installed = assertOwnedProfile(directory, profile)
+  if (compareVersions(installed.bundleVersion, VERSION) > 0) {
+    throw new Error(`refusing to downgrade profile from ${installed.bundleVersion} to ${VERSION}`)
+  }
+  const required = installed.bundleVersion !== VERSION || installed.upstreamVersion !== UPSTREAM_VERSION
+  const applied = required && args.apply
+  if (applied) installProfile(profile, true)
+  emit({
     command: 'migrate',
     profile,
-    fromSchemaVersion: 1,
+    fromSchemaVersion: installed.schemaVersion,
     toSchemaVersion: 1,
-    applied: args.apply,
-  }
-  if (args.apply) {
-    assertOwnedProfile(directory, profile)
-    atomicWrite(patch, readFileSync(patch, 'utf8'))
-    atomicWrite(join(directory, '.pimp-my-dsh.json'), marker(profile))
-  }
-  emit(result, args.json)
+    fromBundleVersion: installed.bundleVersion,
+    toBundleVersion: VERSION,
+    required,
+    applied,
+  }, args.json)
 }
 
 function usage(): void {

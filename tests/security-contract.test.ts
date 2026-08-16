@@ -28,6 +28,12 @@ describe("OpenAI-compatible env indirection", () => {
     expect(src).toMatch(/PIMP_DSH_ENABLE_LSP/);
   });
 
+  it("gates isolated browser automation behind PIMP_DSH_ENABLE_BROWSER", () => {
+    expect(src).toMatch(/PIMP_DSH_ENABLE_BROWSER/);
+    expect(src).toMatch(/--isolated/);
+    expect(src).toMatch(/--browser[\s\S]+chrome/);
+  });
+
   it("ignores DSH_TELEMETRY_MODE (telemetry disabled unconditionally)", () => {
     // The distribution must never read the upstream telemetry switch.
     expect(src).not.toMatch(/process\.env\.DSH_TELEMETRY_MODE/);
@@ -38,6 +44,7 @@ describe("OpenAI-compatible env indirection", () => {
     expect(src).toMatch(/PIMP_DSH_BASE_URL['"], ['"]DSH_PIMP_BASE_URL/);
     expect(src).toMatch(/PIMP_DSH_MODEL['"], ['"]DSH_PIMP_MODEL/);
     expect(src).toMatch(/PIMP_DSH_ENABLE_LSP['"], ['"]DSH_PIMP_ENABLE_LSP/);
+    expect(src).toMatch(/PIMP_DSH_ENABLE_BROWSER['"], ['"]DSH_PIMP_ENABLE_BROWSER/);
   });
 
   it("forces the upstream hard telemetry kill switch", () => {

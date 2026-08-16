@@ -51,4 +51,22 @@ The pin is reassessed when:
 - Upstream changes its license or distribution terms.
 - The skew between npm and source-master grows beyond a cosmetic lag.
 
+## Upgrade gate
+
+A new DSH release is never adopted by changing the dist-tag alone:
+
+1. Change all direct `@deepseek-ai/dsh*` dependencies to the same exact
+   version and regenerate `pnpm-lock.yaml`.
+2. Run `tests/patch-contract.test.ts`; it resolves the pinned
+   `@deepseek-ai/dsh-base` artifact and fails if any distribution override
+   target was removed or renamed.
+3. Run the full contract suite, then boot both a headless profile and the web
+   profile on Windows.
+4. Repeat the approval, Windows sandbox, browser, and isolated-worktree smoke
+   scenarios.
+5. Update this document and the ADR evidence before releasing the new pin.
+
+Any missing row or public API blocks the release. The old exact pin remains
+supported until the replacement passes the entire gate.
+
 See [ADR-0001](adr/0001-no-fork.md#reassessment-triggers) for the full list.

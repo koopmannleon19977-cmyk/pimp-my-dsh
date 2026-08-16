@@ -13,6 +13,20 @@ its limits.
 
 The package manifest declares `^22.19.0 || >=24.0.0`.
 
+## Automated setup
+
+Install the Windows baseline with:
+
+```powershell
+pimp-dsh setup --profile windows
+```
+
+The command uses the bundled, exact-pinned pnpm runtime with lifecycle scripts
+and pnpm hooks disabled, stages the complete profile, and atomically moves it
+under the canonical `DSH_HOME`. The `windows` overlay is intentionally empty:
+the upstream base rows plus the distribution patch already select PowerShell,
+disable Bash, and mount the Windows ACL sandbox by `process.platform`.
+
 ## Shell backend
 
 | Backend | Windows status |

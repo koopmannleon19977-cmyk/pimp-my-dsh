@@ -21,6 +21,26 @@
     provider: pimp-openai
     model: !!js process.env.DSH_PIMP_MODEL ?? 'gpt-5.4'
 
+# Bound every model-emitted parallel-safe tool group. Native sibling subagent
+# calls share this rolling pool and commit their tool results in model order.
+- id: agent-loop
+  config:
+    agents: []
+    maxParallelToolCalls: 4
+
+# Pin the native fresh-child provider and continuable background route instead
+# of relying on upstream defaults that may move during developer preview.
+- id: subagent-spawn-in-process
+  config:
+    providerName: spawn
+
+- id: tool-subagent
+  config:
+    provider: spawn
+    toolName: subagent
+    backgroundMode: continuable
+    maxDepth: 3
+
 # Hard-disabled. DSH_TELEMETRY_MODE cannot reactivate this row.
 - id: session-telemetry-otel
   disabled: true
@@ -66,6 +86,7 @@
   config:
     timeoutMs: 60000
 
+
 - id: pwsh-sandbox
   disabled: !!js process.platform !== 'win32'
 
@@ -85,6 +106,47 @@
 - insert:
     - id: pimp-my-dsh
       name: pimp-my-dsh
+
+    # One-shot fresh child in a unique retained Git worktree. The distribution
+    # provider creates the workspace; active use is approval-gated.
+    - id: tool-subagent-worktree
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: worktree
+        toolName: subagent_worktree
+        backgroundMode: one-shot
+        maxDepth: 3
+
+    # Official Playwright MCP in a fresh in-memory Chrome profile. It receives
+    # the MCP client's credential-scrubbed environment and is explicit opt-in.
+    - id: mcp-browser
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: !!js process.env.DSH_PIMP_ENABLE_BROWSER !== '1'
+      config:
+        serverName: browser
+        transport: stdio
+        command: !!js process.execPath
+        args:
+          - !!js process.env.DSH_PIMP_BROWSER_CLI
+          - --browser
+          - chrome
+          - --headless
+          - --isolated
+          - --block-service-workers
+          - --image-responses
+          - omit
+          - --codegen
+          - none
+          - --output-dir
+          - !!js dshHomePath('browser-output')
+          - --output-max-size
+          - '104857600'
+          - --timeout-action
+          - '10000'
+          - --timeout-navigation
+          - '60000'
+        toolCallTimeoutMs: 70000
+        failOnStartupError: true
 
     # LSP servers are trusted local processes and receive no DSH sandbox.
     # All three rows remain dormant unless the operator explicitly opts in.

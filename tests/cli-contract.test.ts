@@ -27,6 +27,14 @@ describe("CLI contract (built dist)", () => {
       const directory = join(home, "profiles", "web");
       const manifest = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
       expect(manifest.packageManager).toBe("pnpm@11.7.0");
+      expect(manifest.dependencies).toEqual({
+        "pimp-my-dsh": expect.stringMatching(/^link:/),
+        "@deepseek-ai/dsh-lsp": "0.1.0-rc.6",
+        "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.6",
+        "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.6",
+        "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+        "@playwright/mcp": "0.0.79",
+      });
       expect(manifest.dsh.profile.bundles).toEqual([
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
@@ -46,6 +54,30 @@ describe("CLI contract (built dist)", () => {
       expect(runCli(["setup", "--profile", "safe"], { DSH_HOME: home }).status).toBe(0);
       const manifest = JSON.parse(
         readFileSync(join(home, "profiles", "safe", "package.json"), "utf8"),
+      );
+      expect(manifest.dsh.profile.bundles).toEqual([
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-headless",
+        "pimp-my-dsh",
+      ]);
+    });
+
+    it.runIf(process.platform === "win32")("automates the Windows baseline profile", () => {
+      const userHome = makeTempDir();
+      const home = join(userHome, "managed-dsh");
+      const setup = runCli(["setup", "--profile", "windows", "--json"], {
+        DSH_HOME: "~/managed-dsh",
+        HOME: userHome,
+        USERPROFILE: userHome,
+      });
+      expect(setup.status).toBe(0);
+      expect(JSON.parse(setup.stdout)).toMatchObject({
+        command: "setup",
+        profile: "windows",
+        installed: true,
+      });
+      const manifest = JSON.parse(
+        readFileSync(join(home, "profiles", "windows", "package.json"), "utf8"),
       );
       expect(manifest.dsh.profile.bundles).toEqual([
         "@deepseek-ai/dsh-base",
@@ -168,7 +200,14 @@ describe("CLI contract (built dist)", () => {
       );
       expect(forced.status).toBe(0);
       const replaced = JSON.parse(readFileSync(manifestPath, "utf8"));
-      expect(replaced.dependencies).toEqual({ "pimp-my-dsh": expect.stringMatching(/^link:/) });
+      expect(replaced.dependencies).toEqual({
+        "pimp-my-dsh": expect.stringMatching(/^link:/),
+        "@deepseek-ai/dsh-lsp": "0.1.0-rc.6",
+        "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.6",
+        "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.6",
+        "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+        "@playwright/mcp": "0.0.79",
+      });
       expect(replaced.dsh.profile.bundles).toEqual([
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
@@ -257,22 +296,43 @@ describe("CLI contract (built dist)", () => {
   });
 
   describe("migrate: dry-run and atomic behavior", () => {
-    it("is a dry run by default and makes no changes", () => {
+    it("reports a current profile without mutating it", () => {
       const home = makeTempDir();
       expect(runCli(["setup", "--profile", "web"], { DSH_HOME: home }).status).toBe(0);
       const before = snapshotTree(home);
-      const r = runCli(["migrate", "--profile", "web", "--json"], { DSH_HOME: home });
-      expect(r.status).toBe(0);
+      const result = runCli(["migrate", "--profile", "web", "--json"], { DSH_HOME: home });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ required: false, applied: false });
       expect(treesEqual(before, snapshotTree(home))).toBe(true);
     });
 
-    it("applies only with --apply and leaves valid data", () => {
+    it("dry-runs then atomically replaces a stale owned profile", () => {
       const home = makeTempDir();
       expect(runCli(["setup", "--profile", "web"], { DSH_HOME: home }).status).toBe(0);
-      const r = runCli(["migrate", "--profile", "web", "--apply", "--json"], { DSH_HOME: home });
-      expect(r.status).toBe(0);
-      // The migrated tree must still contain the profile patch (no partial write).
-      expect(snapshotTree(home).size).toBeGreaterThan(0);
+      const directory = join(home, "profiles", "web");
+      const markerPath = join(directory, ".pimp-my-dsh.json");
+      const installed = JSON.parse(readFileSync(markerPath, "utf8"));
+      writeFileSync(markerPath, `${JSON.stringify({ ...installed, bundleVersion: "0.0.9" }, null, 2)}\n`);
+      writeFileSync(join(directory, "cordis.patch.yml"), "- legacy: true\n");
+
+      const before = snapshotTree(home);
+      const dryRun = runCli(["migrate", "--profile", "web", "--json"], { DSH_HOME: home });
+      expect(dryRun.status).toBe(0);
+      expect(JSON.parse(dryRun.stdout)).toMatchObject({
+        fromBundleVersion: "0.0.9",
+        toBundleVersion: "0.1.0",
+        required: true,
+        applied: false,
+      });
+      expect(treesEqual(before, snapshotTree(home))).toBe(true);
+
+      const applied = runCli(["migrate", "--profile", "web", "--apply", "--json"], { DSH_HOME: home });
+      expect(applied.status).toBe(0);
+      expect(JSON.parse(applied.stdout)).toMatchObject({ required: true, applied: true });
+      expect(JSON.parse(readFileSync(markerPath, "utf8"))).toMatchObject({ bundleVersion: "0.1.0" });
+      expect(readFileSync(join(directory, "cordis.patch.yml"), "utf8")).not.toContain("legacy");
+      const doctor = runCli(["doctor", "--profile", "web", "--json"], { DSH_HOME: home });
+      expect(JSON.parse(doctor.stdout).profileReady).toBe(true);
     });
 
     it("cannot mint an ownership marker for an unmanaged profile", () => {

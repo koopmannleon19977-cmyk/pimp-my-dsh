@@ -14,7 +14,12 @@ upstream without forking it.
 - [x] Add fixed-operation, read-only Git inspection.
 - [x] Add append-only durable memory under the harness home.
 - [x] Disable telemetry unconditionally.
-- [x] Disable web fetch/search and browser automation.
+- [x] Keep web fetch/search disabled; add isolated browser automation behind
+      explicit opt-in and active-interaction approval.
+- [x] Add fixed-operation, read-only GitHub inspection through trusted `gh`.
+- [x] Pin native fresh-session subagents with bounded parallel dispatch and
+      delegated fail-closed approval.
+- [x] Add approval-gated one-shot subagents in retained Git worktrees.
 - [x] Keep LSP opt-in and disclose its unsandboxed risk.
 - [x] Ship `setup`, `run`, `doctor`, `update-check`, `migrate` CLI commands.
 - [x] Document the partial Windows sandbox honestly.
@@ -28,6 +33,8 @@ no-fork decision.
 
 - [ ] Add a safe public-network web provider (if one exists upstream) and gate
       it behind explicit opt-in, keeping the SSRF primitive disabled.
+- [ ] Add browser network confinement before enabling browser automation by
+      default.
 - [ ] Add read-side confinement on Windows (pair the ACL write boundary with a
       read-side policy or AppContainer capability token).
 - [ ] Add a community-plugin review checklist artifact that the reviewed
@@ -42,7 +49,7 @@ no-fork decision.
 
 - [ ] Track upstream releases and re-pin on a documented cadence.
 - [ ] Add a signed release artifact and provenance attestation.
-- [ ] Add a migration path for profile patch data across distribution versions.
+- [x] Add a migration path for profile patch data across distribution versions.
 - [ ] Add Windows-specific integration tests for the sandbox boundaries.
 - [ ] Publish a plugin-authoring guide for the reviewed allowlist gate.
 
@@ -59,7 +66,7 @@ no-fork decision.
 
 - Forking DeepSeek Harness.
 - Reimplementing upstream native tools.
-- Browser automation.
+- Logged-in browser profile control or desktop computer use.
 - GitHub write automation.
 - A community plugin registry or catalog with automatic discovery.
 - Claiming full sandbox isolation on Windows.

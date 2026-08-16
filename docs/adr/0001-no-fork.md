@@ -19,42 +19,40 @@ Two ways to build a distribution were considered:
 
 ## Decision
 
-**Consume upstream as an exact npm dependency. Never fork it.**
+**Consume upstream as an exact npm dependency; do not maintain a fork at the
+current evidence point.**
 
 `pimp-my-dsh` depends on `@deepseek-ai/dsh@0.1.0-rc.6` and every direct
 `@deepseek-ai/dsh-*` package at the exact version `0.1.0-rc.6`. The
-distribution composes upstream bundles through `cordis.patch.yml` (overriding
-base rows by stable id and inserting the distribution-owned plugin) and adds a
-small CLI. It contains no copied upstream source.
+distribution composes upstream bundles through `cordis.patch.yml`, adds
+distribution-owned plugins and a small CLI, and contains no copied upstream
+source.
 
 ## Evidence
 
-The evidence gathered to support this decision:
+| Question | Verified evidence | Decision impact |
+| --- | --- | --- |
+| Are required extension seams public? | Source imports use published package roots only. Model rows, tools (`ctx.tools.register`), prompt sections (`ctx.systemPrompt`), approval events (`tools/pre-execute`), sessions, MCP, and subagent providers (`ctx.subagents.registerProvider`) compose without upstream source edits. | No missing seam currently requires a fork. |
+| Can bundle overrides survive upstream drift? | The distribution targets 16 upstream row ids. `tests/patch-contract.test.ts` resolves the pinned published `@deepseek-ai/dsh-base` patch and fails when a target disappears or is renamed. | Exact pins plus a release-blocking contract test are adequate; silent drift is not accepted. |
+| Is the security model replaceable? | `cordis.patch.yml` replaces sandbox, permission, approval, shell, telemetry, and web-tool rows. `src/plugin.ts` adds a fail-closed pre-execution gate. Browser and LSP capabilities remain disabled until explicit opt-in. | Current controls need no core patch. Windows read/network confinement remains a capability limit, not a hidden claim. |
+| Does a custom UI require core changes? | The web bundle is an ordinary patch composition. `packages/host/frontend-static` serves a replaceable SPA, `packages/client/*` exposes client plugins and UI slots, and `packages/host/apiproxy` publishes a transport-independent TypeScript/fetch contract. | A branded web client, desktop wrapper, or alternate carrier can be a bundle/plugin. The unversioned prerelease wire protocol must remain lockstep-pinned. |
+| Is the release cycle manageable? | npm published six DSH release candidates between 2026-08-10 19:41 UTC and 2026-08-13 12:35 UTC. This repository pins 10 direct DSH packages and records a release gate in `docs/upstream-pin.md`. | Cadence is high, but it argues for exact pins and gated upgrades, not a permanently rebased fork. |
+| Has the composed product actually run? | The contract suite exercises package/profile ownership, tools, approval, worktree isolation, migrations, and drift checks. Windows smoke runs booted headless and web profiles, exercised the approval UI, and ran an isolated child in its retained worktree. | The no-fork conclusion rests on executed composition, not architecture documents alone. |
 
-1. **Upstream is designed for composition, not forking.** The upstream
-   architecture document states that "there is no privileged core to patch: you
-   extend dsh by mounting a plugin beside the others." A profile is a named
-   composition of ordered bundle layers, and a patch targets a row by id and
-   replaces its whole config. This is the documented extension mechanism.
+The current limitations do not fire a fork trigger:
 
-2. **The distribution's needs are compositional.** The required changes —
-   disabling telemetry, disabling web tools, keeping LSP opt-in, and adding
-   distribution-owned prompt/context guidance — are all expressible as
-   patch-layer overrides and a single plugin. None require modifying upstream
-   source.
-
-3. **Upstream publishes a consumable npm artifact.** `@deepseek-ai/dsh` is
-   published to the npm registry with a `bin` entry and a full dependency
-   closure. The published artifact is MIT-licensed.
-
-4. **A fork would create an unbounded maintenance burden.** Upstream iterates
-   rapidly (multiple release candidates in a single week). A fork would require
-   continuously rebasing against upstream, and would risk diverging from the
-   security fixes and Windows sandbox improvements that upstream ships.
-
-5. **A fork would weaken the security story.** The upstream Windows sandbox
-   (`@deepseek-ai/dsh-sandbox-windows-acl`) is under active development. A fork
-   would either lag behind those fixes or duplicate them.
+1. Windows ACL confinement restricts writes but not reads, network, or process
+   visibility. Replacing that backend is a sandbox-plugin project; forking the
+   agent loop would not solve it.
+2. Browser network egress is not confined. Browser automation therefore stays
+   opt-in and approval-gated instead of being enabled by default.
+3. The API proxy explicitly has no protocol-version field because its client
+   and host currently ship together. An independently released custom client
+   must pin the matching DSH package family until upstream versions that wire
+   contract.
+4. Upstream is in developer preview and warns of compatibility-breaking
+   changes. Every new pin must pass the upgrade gate; the existing pin remains
+   supported when it does not.
 
 ## Consequences
 
