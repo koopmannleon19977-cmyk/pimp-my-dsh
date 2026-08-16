@@ -25,8 +25,9 @@ inside the privileged controller webview" (research §9, architecture.md
 window as the primary product surface.** The controller lobby (label `main`)
 stays the control surface; a new window (label `harness`) renders the
 Rust-constructed loopback READY URL. `open_harness` opens/refocuses that window
-instead of the system browser. The system-browser path remains only for
-`reveal_log_folder`.
+instead of the system browser, and on reaching `Running` the supervisor opens it
+automatically and demotes the lobby to the tray. The system-browser path remains
+only for `reveal_log_folder`.
 
 Two windows, one authority:
 

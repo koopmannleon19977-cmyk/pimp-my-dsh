@@ -116,8 +116,30 @@ mod desktop_app {
                 let supervisor = commands::init_supervisor();
                 let resource_dir = app.path().resource_dir().ok();
                 let emitter = app.handle().clone();
-                supervisor.set_emitter(resource_dir, move |snapshot| {
-                    let _ = emitter.emit("supervisor://snapshot", snapshot);
+                let auto_opened = std::sync::Arc::new(std::sync::Mutex::new(None::<u64>));
+                supervisor.set_emitter(resource_dir, {
+                    let emitter = emitter.clone();
+                    let auto_opened = auto_opened.clone();
+                    move |snapshot| {
+                        // Product-first: on reaching Running, bring the harness
+                        // webview forward and demote the lobby to the tray. Guard
+                        // on revision so this fires once per run, not on every
+                        // Running snapshot (logs/health re-emit without a
+                        // transition).
+                        if snapshot.state == State::Running {
+                            let mut last = auto_opened.lock().expect("auto-open lock");
+                            if *last != Some(snapshot.revision) {
+                                *last = Some(snapshot.revision);
+                                if let Ok(url) = commands::validated_endpoint() {
+                                    let _ = open_harness_window(&emitter, &url);
+                                    if let Some(main) = emitter.get_webview_window("main") {
+                                        let _ = main.hide();
+                                    }
+                                }
+                            }
+                        }
+                        let _ = emitter.emit("supervisor://snapshot", snapshot);
+                    }
                 });
 
                 build_tray(app)?;

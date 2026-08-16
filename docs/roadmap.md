@@ -86,6 +86,7 @@ no-fork decision.
 **Goal:** add operational polish to the desktop supervisor.
 
 - [x] Embedded zero-capability harness webview as primary product surface (`open_harness` opens in-app).
+- [x] Auto-open the product window and demote the lobby to the tray on `Running`.
 - [ ] Autostart opt-in (Start Menu Startup `.lnk` via `IShellLink`).
 - [ ] Structured `doctor --json` delegation from tray.
 - [ ] Crash/restart policy knob (never/always/ask).
