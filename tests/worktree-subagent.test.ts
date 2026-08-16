@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, wr
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createWorktree } from "../src/worktree-subagent";
+import { sameFilesystemEntry } from "../src/trusted-git";
 import { makeTempDir } from "./helpers";
 
 function git(cwd: string, args: string[]): string {
@@ -22,6 +23,17 @@ describe("worktree subagent workspace", () => {
   afterEach(() => {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;
+  });
+
+  it("recognizes alias paths only when they name the same directory object", () => {
+    const target = makeTempDir("entry-target-");
+    const container = makeTempDir("entry-alias-");
+    const alias = join(container, "alias");
+    const sibling = join(container, "sibling");
+    mkdirSync(sibling);
+    symlinkSync(target, alias, process.platform === "win32" ? "junction" : "dir");
+    expect(sameFilesystemEntry(target, alias)).toBe(true);
+    expect(sameFilesystemEntry(target, sibling)).toBe(false);
   });
 
   it("creates a branch whose index matches HEAD and copies only tracked workspace state", () => {

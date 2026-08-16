@@ -22,7 +22,7 @@ import type {
   SubagentRun,
 } from '@deepseek-ai/dsh-subagent'
 import { startInProcessRun } from '@deepseek-ai/dsh-subagent-in-process-driver'
-import { gitExecutable, processFailure, trustedGitEnvironment } from './trusted-git.js'
+import { gitExecutable, processFailure, sameFilesystemEntry, trustedGitEnvironment } from './trusted-git.js'
 
 const MAX_GIT_OUTPUT = 16_000
 const MAX_INDEX_BYTES = 67_108_864
@@ -58,7 +58,7 @@ function repositoryRoot(cwd: string): string {
   const workspace = realpathSync(cwd)
   const stdout = runGit(workspace, ['rev-parse', '--show-toplevel'])
   const root = realpathSync(resolve(workspace, stdout.toString('utf8').trim()))
-  if (relative(workspace, root) !== '') throw new Error('worktree subagents require the session workspace to be the repository root')
+  if (!sameFilesystemEntry(workspace, root)) throw new Error('worktree subagents require the session workspace to be the repository root')
   return root
 }
 

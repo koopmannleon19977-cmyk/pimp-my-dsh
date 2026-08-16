@@ -23,6 +23,13 @@ const SAFE_GIT_ENVIRONMENT = [
 
 const executableCache = new Map<string, string>()
 
+export function sameFilesystemEntry(left: string, right: string): boolean {
+  if (relative(left, right) === '') return true
+  const leftEntry = statSync(left, { bigint: true })
+  const rightEntry = statSync(right, { bigint: true })
+  return leftEntry.dev === rightEntry.dev && leftEntry.ino !== 0n && leftEntry.ino === rightEntry.ino
+}
+
 export function trustedExecutable(baseName: string): string {
   const name = process.platform === 'win32' ? `${baseName}.exe` : baseName
   const cached = executableCache.get(name)

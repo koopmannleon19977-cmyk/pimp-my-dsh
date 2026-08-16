@@ -13,7 +13,7 @@ import {
   realpathSync,
   type Stats,
 } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -21,6 +21,7 @@ import { defineTool, type JsonValue, type PreToolDecision, type ToolExecution } 
 import {
   gitExecutable,
   processFailure as gitFailure,
+  sameFilesystemEntry,
   trustedExecutable,
   trustedGitEnvironment as gitEnvironment,
 } from './trusted-git.js'
@@ -249,7 +250,7 @@ function gitWorkspaceRoot(cwd: string): string {
   if (probe.error) throw new Error(probe.error.message.slice(0, MAX_GIT_OUTPUT))
   if (probe.status !== 0) throw gitFailure(probe.stderr, 'workspace is not a Git repository')
   const root = realpathSync(resolve(workspace, probe.stdout.trim()))
-  if (relative(workspace, root) === '') return root
+  if (sameFilesystemEntry(workspace, root)) return root
   throw new Error('current working directory must be the Git repository root')
 }
 
