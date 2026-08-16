@@ -92,25 +92,17 @@ mod desktop_app {
     }
 
     fn open_harness_window(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
-        use tauri::WebviewWindowBuilder;
-        use tauri::WebviewUrl;
         let url =
             tauri::Url::parse(url).map_err(|e| format!("invalid endpoint: {e}"))?;
-        if let Some(window) = app.get_webview_window("harness") {
-            window
-                .navigate(url)
-                .map_err(|e| format!("navigate harness window: {e}"))?;
-            let _ = window.show();
-            let _ = window.set_focus();
-            return Ok(());
-        }
-        WebviewWindowBuilder::new(app, "harness", WebviewUrl::External(url))
-            .title("Pimp my DSH")
-            .inner_size(1200.0, 800.0)
-            .min_inner_size(800.0, 600.0)
-            .build()
-            .map(|_| ())
-            .map_err(|e| format!("create harness window: {e}"))
+        let window = app
+            .get_webview_window("harness")
+            .ok_or_else(|| "harness window not found".to_string())?;
+        window
+            .navigate(url)
+            .map_err(|e| format!("navigate harness window: {e}"))?;
+        let _ = window.show();
+        let _ = window.set_focus();
+        Ok(())
     }
 
     pub fn run() {
@@ -132,14 +124,12 @@ mod desktop_app {
                 Ok(())
             })
             .on_window_event(|window, event| {
-                // Close-to-tray only for the controller window. The harness
-                // product window closes (destroys) and is recreated on demand;
-                // the supervisor/Job continues either way.
+                // Close-to-tray for both windows: the supervisor stays resident.
+                // The product window hides (never destroys) so "Open Web UI"
+                // always re-navigates and un-hides it.
                 if let WindowEvent::CloseRequested { api, .. } = event {
-                    if window.label() == "main" {
-                        let _ = window.hide();
-                        api.prevent_close();
-                    }
+                    let _ = window.hide();
+                    api.prevent_close();
                 }
             })
             .invoke_handler(tauri::generate_handler![

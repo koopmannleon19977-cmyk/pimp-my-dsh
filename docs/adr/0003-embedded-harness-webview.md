@@ -33,7 +33,7 @@ Two windows, one authority:
 | Window | Label | Loads | Capabilities |
 | --- | --- | --- | --- |
 | Controller lobby | `main` | bundled assets | `capabilities/main-window.json` (`core:default`) |
-| Product surface | `harness` | `WebviewUrl::External(loopback READY URL)` | **none** — no capability file scopes to `harness` |
+| Product surface | `harness` | `about:blank` at startup (hidden); `navigate(loopback READY URL)` + `show()` on demand | **none** — no capability file scopes to `harness` |
 
 ## Security invariants (unchanged from Phase 0)
 
@@ -43,12 +43,14 @@ Two windows, one authority:
 - The URL is constructed in Rust from the authenticated READY frame
   (`supervisor::validated_endpoint`), never from the renderer. `state_allows_open`
   (`Ready | Running`) gates it.
-- The harness page keeps its own remote CSP; the controller's global CSP
-  (`tauri.conf.json`) applies to bundled assets, not the external URL. No
-  stricter CSP is injected (would risk breaking the harness's own scripts).
-- Close-to-hide is scoped to the `main` window only. Closing the `harness`
-  window destroys it; it is recreated on the next `open_harness`. The
-  supervisor/Job continue regardless (`CRASH-03` still holds).
+- The harness page keeps its own remote CSP. The controller's strict CSP lives
+  as a `<meta>` in its own `index.html` (travels with the bundled content); the
+  `harness` window has no Tauri-injected CSP, so the remote server's CSP governs
+  and its module scripts are not blocked.
+- Close-to-hide applies to **both** windows: the supervisor stays resident. The
+  `harness` window is declared in `tauri.conf.json` (hidden, `about:blank`) so
+  its WebView2 initializes at startup, then is only `navigate`d + shown — it
+  never destroys, so `open_harness` always re-navigates and re-focuses it.
 
 This **does not fork `dsh-web-app`** (ADR-0001) and **does not grant the
 renderer shell/filesystem/opener access** (ADR-0002 security posture).
