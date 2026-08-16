@@ -2,7 +2,8 @@
 
 `pimp-my-dsh` is a thin distribution over DeepSeek Harness. It composes the
 upstream plugin bundles through a patch layer and one distribution-owned plugin.
-It adds no native execution primitives of its own. The security posture is
+That plugin adds two narrow capabilities: fixed-argument, read-only Git
+inspection and append-only durable memory. All other execution authority is
 inherited from upstream and narrowed by this distribution's configuration.
 
 This document is the authoritative statement of that posture. It is honest about
@@ -27,6 +28,29 @@ The primary threats this distribution is designed to reduce:
 This distribution does **not** attempt to defend against a malicious model or a
 malicious plugin that has already been granted execution authority. The Windows
 sandbox is a write boundary, not an isolation boundary.
+
+## Distribution-owned Git and memory tools
+
+`pimp_git_read` resolves `git` from absolute `PATH` entries before entering the
+repository, then invokes only `status`, `diff`, or `log` with fixed arguments.
+The child receives an allowlisted, credential-free environment. System/global
+Git config, pagers, hooks, fsmonitor, signature programs, credential helpers,
+external diff/text conversion, and lazy object fetching are disabled.
+Repository-declared clean/process filters are enumerated and neutralized before
+`status` or `diff`; unsupported filter names fail closed. Success and error
+output are capped at 16,000 characters. The canonical process working directory
+must be the repository root. Arbitrary arguments and mutating operations are
+outside the schema.
+
+`pimp_memory` writes newline-delimited JSON only to the canonical private
+directory `DSH_HOME/pimp-my-dsh/memory.jsonl`. The directory and log must be
+non-linked; multiply-linked files are rejected. Notes and queries are capped at
+4,096 characters before normalization. Recall reads at most the newest 1 MiB and
+returns at most ten records. The log is shared by every session and workspace
+using that harness home. Any of those sessions can recall its records, so notes
+must not contain credentials or sensitive values. This is a trusted
+distribution-plugin write outside the workspace sandbox, not model-selected
+filesystem access.
 
 ## Telemetry: disabled unconditionally
 

@@ -28,6 +28,8 @@ snapshot; the roadmap is in [roadmap.md](roadmap.md).
 | Web search | **Disabled** | No safe provider |
 | Browser automation | **Disabled** | Not shipped |
 | LSP navigation | **Opt-in, unsandboxed** | `PIMP_DSH_ENABLE_LSP` |
+| Scoped Git reads | **Enabled** | `pimp_git_read`: fixed status/diff/log; helper execution, lazy fetch, secrets, and arbitrary args disabled |
+| Durable memory | **Enabled** | `pimp_memory`: canonical non-linked JSONL under `DSH_HOME`; bounded recall |
 | Community plugins | **Reviewed allowlist gate** | Policy, not code; no registry |
 | GitHub write automation | **Not present** | No such capability exists |
 

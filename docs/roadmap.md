@@ -11,6 +11,8 @@ upstream without forking it.
 - [x] Consume `@deepseek-ai/dsh@0.1.0-rc.6` as an exact npm dependency.
 - [x] Compose upstream bundles through `cordis.patch.yml` by stable id.
 - [x] Ship a distribution-owned plugin with stable prompt/context guidance.
+- [x] Add fixed-operation, read-only Git inspection.
+- [x] Add append-only durable memory under the harness home.
 - [x] Disable telemetry unconditionally.
 - [x] Disable web fetch/search and browser automation.
 - [x] Keep LSP opt-in and disclose its unsandboxed risk.

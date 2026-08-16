@@ -26,6 +26,9 @@ importers:
       '@deepseek-ai/dsh-tool-lsp':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(b9b1402371541b60d7b72f6da5e84206)
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.1.0-rc.6
+        version: 0.1.0-rc.6(f8724372086ccc1457fc84e7becee2e0)
       pnpm:
         specifier: 11.7.0
         version: 11.7.0

@@ -161,6 +161,8 @@ Full details: [docs/windows-support.md](docs/windows-support.md).
 | PowerShell execution | Enabled, write-confined (partial) |
 | Bash execution | Disabled on Windows |
 | Sessions / skills / todo / subagents | Enabled (upstream) |
+| Scoped Git status / diff / log | Enabled (`pimp_git_read`, read-only) |
+| Durable memory | Enabled (`pimp_memory`, append-only under `DSH_HOME`) |
 | Telemetry | Disabled unconditionally |
 | Web fetch / search | Disabled (SSRF risk) |
 | Browser automation | Disabled |

@@ -12,7 +12,7 @@ then wraps them in a small CLI. It contains no copied upstream source.
 │   setup · run · doctor · update-check · migrate         │
 ├─────────────────────────────────────────────────────────┤
 │ Distribution plugin (src/plugin.ts)                     │
-│   stable prompt/context                                   │
+│   prompt/context · scoped Git · durable memory          │
 ├─────────────────────────────────────────────────────────┤
 │ cordis.patch.yml                                        │
 │   overrides upstream base rows by stable id             │
@@ -50,9 +50,9 @@ other shipped profile adds `headless`, providing a concrete one-shot surface.
 The distribution owns exactly two source files:
 
 - **`src/cli.ts`** — the `pimp-dsh` binary. It owns `setup`, `run`, `doctor`,
-  `update-check`, and `migrate`. It never reimplements upstream tools.
-- **`src/plugin.ts`** — a Cordis plugin that contributes stable
-  distribution-owned prompt/context guidance.
+  `update-check`, and `migrate`. It does not reimplement upstream tools.
+- **`src/plugin.ts`** — a Cordis plugin that contributes prompt/context
+  guidance, a read-only scoped Git tool, and append-only durable memory.
 
 Everything else is upstream, consumed through the published npm artifact.
 
