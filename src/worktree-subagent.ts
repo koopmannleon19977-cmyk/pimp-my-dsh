@@ -58,7 +58,7 @@ function repositoryRoot(cwd: string): string {
   const workspace = realpathSync(cwd)
   const stdout = runGit(workspace, ['rev-parse', '--show-toplevel'])
   const root = realpathSync(resolve(workspace, stdout.toString('utf8').trim()))
-  if (root !== workspace) throw new Error('worktree subagents require the session workspace to be the repository root')
+  if (relative(workspace, root) !== '') throw new Error('worktree subagents require the session workspace to be the repository root')
   return root
 }
 
