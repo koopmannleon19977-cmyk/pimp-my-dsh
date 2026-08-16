@@ -36,6 +36,45 @@ tarball whose version is bumped at release time, while the source manifest is
 bumped on a different cadence. It is a cosmetic source-tree lag, not a
 functional difference in the consumed artifact.
 
+## Desktop supervisor pins
+
+The desktop supervisor (`apps/desktop/`) adds these exact version pins. All
+pins are exact — never ranges, never dist-tags.
+
+| Component | Version | Source |
+| --- | --- | --- |
+| Tauri | `2.11.5` | Tauri Cargo.toml |
+| Tauri single-instance plugin | `2.4.3` | Official plugins-workspace release |
+| Rust edition | `2024` | `edition = "2024"` in Cargo.toml |
+| Node.js (payload) | `24.19.0` win-x64 | SHA-256 pinned |
+| pnpm | `11.7.0` | Workspace root |
+| React | `19.2.8` | `apps/desktop/package.json` |
+| Vite | `8.2.1` | `apps/desktop/vite.config` |
+| Fluent UI React Components | `9.74.6` | `apps/desktop/package.json` |
+| Fluent icons | `2.0.337` | `apps/desktop/package.json` |
+| @deepseek-ai/dsh | `0.1.0-rc.6` | Shared with CLI |
+| distribution version | `0.1.0` | Compatibility manifest |
+| controller version | `0.1.0` | Compatibility manifest |
+
+Shared with the CLI distribution:
+
+- The desktop uses the **same** upstream DSH pin (`0.1.0-rc.6`).
+- The compatibility manifest v1 verifies all exact versions together:
+  `controllerVersion:'0.1.0'`, `node:{version:'24.19.0',sha256}`,
+  `pnpmVersion:'11.7.0'`, `distributionVersion:'0.1.0'`,
+  `dshVersion:'0.1.0-rc.6'`, `target:'x86_64-pc-windows-msvc'`.
+- The `node.exe` SHA-256 is verified against the exact-pinned Windows zip
+  payload before process creation.
+- A deterministic payload tree hash is verified alongside the node SHA.
+
+Development vs packaged providers:
+
+- **Packaged provider** (production builds): verifies manifest, target, all
+  exact versions, `node.exe` SHA-256, and payload tree hash. Never consults
+  PATH.
+- **Development provider** (debug config only): verifies absolute workspace
+  identity plus installed versions. Exists only under `debug` Cargo config.
+
 ## Why not fork
 
 The decision to consume upstream as an exact npm dependency rather than fork it
@@ -50,6 +89,7 @@ The pin is reassessed when:
 - The distribution's patch layer breaks against a new upstream version.
 - Upstream changes its license or distribution terms.
 - The skew between npm and source-master grows beyond a cosmetic lag.
+- A Tauri major version (e.g., 2.x to 3.x) requires migration.
 
 ## Upgrade gate
 

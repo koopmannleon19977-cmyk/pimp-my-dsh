@@ -223,6 +223,68 @@ pinned to `never`. The worktree and branch remain for human review; nothing is
 merged or deleted automatically. Worktree creation itself requires an
 interactive approval channel.
 
+## Desktop supervisor (Windows)
+
+A per-user tray controller built with **Tauri 2.11.5** (Rust core + React view) sits above the
+existing `pimp-my-dsh` CLI. It provides persistent tray presence, process supervision, and
+structured health reporting — all on Windows 10/11 x64.
+
+> **Rendering note:** Tauri on Windows uses Microsoft Edge WebView2 to render its UI. This is a
+> web engine, not truly native rendering. The control surface looks and feels polished but it does
+> not produce pixels via the OS toolkit. See
+> [docs/security-model.md#desktop-rendering](docs/security-model.md#desktop-rendering).
+
+### What it owns
+
+| Responsibility | How |
+| --- | --- |
+| **Lifecycle authority** | Rust backend; owns the closed state machine (13 states), the unnamed kill-on-close [Job Object](https://learn.microsoft.com/windows/win32/procthread/job-objects), and all live process/Job handles. JavaScript is a read-only view. |
+| **Process launch** | `CreateProcessW` with `CREATE_NO_WINDOW | CREATE_SUSPENDED`, an explicit inherited-handle allowlist, and fixed `node.exe` absolute path. No shell, no PATH fallback, no `cmd.exe`. |
+| **Port selection** | Default start is **dynamic** (`--port 0`, OS-assigned). A fixed 3080 is opt-in; a foreign/busy 3080 fails with `PORT_IN_USE_FOREIGN` — never inspected, never killed. |
+| **Child bridge** | Named-pipe transport, versioned v1 contract, random per-run 64-char hex token, `PIPE_REJECT_REMOTE_CLIENTS`, bounded 64 KiB frames, first-instance creation only. |
+| **Graceful / forced stop** | Bridge sends cooperative shutdown (upstream's `PROCESS_SHUTDOWN_TIMEOUT_MS = 5s`); deadline elapses → `TerminateJobObject`. A forced stop is **never** reported as graceful. |
+| **Close / quit** | Closing the window hides the tray controller (resident). Explicit Quit follows the stop policy and never silently detaches the harness. |
+| **Authority identity** | Live process HANDLE, Job handle, and random run ID. PID, image path, creation time, port, and state files are **diagnostics only** — never grounds to kill or adopt. |
+| **Logs** | `LogEvent` struct with 16 KiB/event limit, secret redaction of `PIMP_DSH_*`/`DSH_PIMP_*` env values, bounded in-memory queue, disk writer fallback to drain-and-discard. |
+| **Runtime manifest** | `compatibility` manifest v1 verified before launch: controller `0.1.0`, Node `24.19.0`, pnpm `11.7.0`, distribution `0.1.0`, DSH `0.1.0-rc.6`, target `x86_64-pc-windows-msvc`, `node.exe` SHA-256, payload tree hash. |
+| **Data / log paths** | State, logs, and bridge artifacts live under the per-user app data directory. The harness home (`DSH_HOME`) and managed profile directory must remain outside the writable workspace. |
+| **NSIS installer** | Per-user `*-setup.exe`, `downloadBootstrapper` WebView2 mode (+0 MB on systems with Edge updates). Uninstall removes the app, shortcuts, and per-user uninstall registry entry while preserving controller state/logs and `DSH_HOME` profile data. |
+| **Signing boundary** | Dual signing planned for Phase 2: Authenticode `signtool` for the Windows executable **and** Tauri's mandatory update-signature private key. Development builds are unsigned — **development only, not for distribution**. |
+| **Updater key boundary** | Tauri's updater requires a signed private key; losing it bricks updates. Key custody (offline backup, planned trust-root rotation) is an operational prerequisite. **No updater is shipped in Phase 0.** |
+
+### What it does not do
+
+- **No shell plugin in the renderer.** JavaScript has no `shell`, `opener`, `filesystem`, or `updater` capabilities. Spawning exists only in Rust.
+- **No telemetry, no LAN, no daemon.** The controller sends no machine data and never runs as a Windows service.
+- **No logged-in browser or desktop automation.** The controller opens the harness web UI in the system browser (or a zero-capability webview), never inside the privileged controller webview.
+- **No unsigned installer for production.** The locally built NSIS `*-setup.exe` has no Authenticode signature and is a development artifact only. Production releases require dual Authenticode + Tauri update signatures.
+
+### Architecture in brief
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Tray / Window (React, no capabilities)                  │
+│   get_snapshot · start_harness · stop_harness           │
+│   run_doctor · open_harness · reveal_log_folder         │
+│   set_theme · set_fixed_port                            │
+├─────────────────────────────────────────────────────────┤
+│ Tauri 2.11.5 core (Rust)                                │
+│   State machine · Job Object · process supervisor        │
+│   Bridge (named pipe, token-auth) · log pipeline         │
+│   Provider (packaged / debug) · compatibility manifest   │
+├─────────────────────────────────────────────────────────┤
+│ DeepSeek Harness CLI (Node, child process)              │
+│   `pimp-dsh run --profile web` — validated boundary      │
+└─────────────────────────────────────────────────────────┘
+```
+
+See [docs/architecture.md](docs/architecture.md) for the full architecture.
+See [docs/security-model.md](docs/security-model.md) for the security model including the
+desktop-specific boundaries.
+See [docs/windows-support.md](docs/windows-support.md) for Windows-specific notes.
+See [docs/adr/0002-tauri-desktop-supervisor.md](docs/adr/0002-tauri-desktop-supervisor.md)
+for the Tauri decision record.
+
 ## Upstream version pin
 
 This distribution pins `@deepseek-ai/dsh` and every direct
@@ -246,6 +308,7 @@ Phase-gated, no dates promised. See [docs/roadmap.md](docs/roadmap.md).
 - [Upstream version pin](docs/upstream-pin.md)
 - [Roadmap](docs/roadmap.md)
 - [ADR-0001: no fork](docs/adr/0001-no-fork.md)
+- [ADR-0002: Tauri desktop supervisor](docs/adr/0002-tauri-desktop-supervisor.md)
 
 ## Security
 

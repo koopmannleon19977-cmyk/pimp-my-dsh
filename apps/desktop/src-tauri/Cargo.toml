@@ -1,0 +1,76 @@
+[package]
+name = "pimp-dsh-desktop"
+version = "0.1.0"
+description = "Windows-first Tauri 2 desktop supervisor for pimp-my-dsh"
+authors = ["pimp-my-dsh contributors"]
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+default-run = "pimp-dsh-desktop"
+
+[lib]
+name = "pimp_dsh_desktop"
+# Windows desktop links the rlib; observable contracts live in `tests/`.
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+sha2 = "=0.11.0"
+
+[dependencies]
+tauri = { version = "=2.11.5", features = ["tray-icon", "image-png", "image-ico"] }
+tauri-plugin-single-instance = "=2.4.3"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+thiserror = "=2.0.20"
+sha2 = "=0.11.0"
+getrandom = "=0.3.4"
+chrono = "=0.4.45"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authentication_Identity",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_SystemServices",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+[[bin]]
+name = "fixture-child"
+path = "tests/fixtures/child.rs"
+
+[[bin]]
+name = "fixture-grandchild"
+path = "tests/fixtures/grandchild.rs"
+[dev-dependencies]
+serde_json = "=1.0.151"
+sha2 = "=0.11.0"
+
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+] }

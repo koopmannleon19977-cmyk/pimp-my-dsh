@@ -26,6 +26,7 @@ import {
   trustedGitEnvironment as gitEnvironment,
 } from './trusted-git.js'
 import { registerWorktreeSubagent } from './worktree-subagent.js'
+import { registerSupervisorBridge } from './supervisor-bridge.js'
 
 export const name = 'pimp-my-dsh'
 export const inject = ['systemPrompt', 'tools', 'subagents']
@@ -625,8 +626,8 @@ export function apply(ctx: Context): void {
     order: -90,
     text: 'Distribution: pimp-my-dsh 0.1.0; upstream: @deepseek-ai/dsh 0.1.0-rc.6.',
   })
-
   registerWorktreeSubagent(ctx)
+  registerSupervisorBridge(ctx)
   ctx.on('tools/pre-execute', toolApprovalGate, { prepend: true })
 
   ctx.tools.register(defineTool({

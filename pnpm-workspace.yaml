@@ -1,2 +1,11 @@
 packages:
   - "."
+  - "apps/desktop"
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': false
+  '@google/genai': false
+  koffi: false
+  node-pty: false
+  protobufjs: false
+overrides:
+  use-sync-external-store: 1.6.0

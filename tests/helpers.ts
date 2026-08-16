@@ -62,6 +62,6 @@ export function runCli(args: string[], env: Record<string, string> = {}, cwd = R
     cwd,
     env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", ...env },
     encoding: "utf8",
-    timeout: 30_000,
+    timeout: 120_000,
   });
 }

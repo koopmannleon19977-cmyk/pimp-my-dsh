@@ -209,6 +209,146 @@ admitted.
 - Structured CLI results (`--json`) contain only non-secret status and
   diagnostic fields.
 
+## Desktop supervisor security model
+
+### WebView2 rendering
+
+Tauri on Windows renders the control surface using **Microsoft Edge WebView2**.
+This is a Chromium-based web engine, not truly native rendering. The UI looks
+and feels polished, but it does not produce pixels via the OS toolkit (WinUI,
+WPF, Win32, or Impeller). WebView2 ships with Windows 10/11 as part of Edge
+updates and is evergreen — Microsoft patches it automatically. This has two
+consequences:
+
+- **Air-gapped deployments** cannot rely on the default `downloadBootstrapper`
+  mode. They must use `offlineInstaller` (~127 MB) or `fixedVersion`
+  (~180 MB) to ship their own WebView2, accepting that browser patches become
+  the project's responsibility rather than Microsoft's.
+- **Accessibility** is Chromium's accessibility tree, inherited through
+  WebView2. It is not UIA-native, but it is functional for screen readers.
+
+### Strict frontend / native split
+
+The Tauri controller enforces a hard boundary between the Rust supervisor and
+the React view:
+
+**Rust owns all authority.** The Rust backend owns:
+- The closed 13-state lifecycle state machine
+- The unnamed kill-on-close Job Object
+- Live process and Job handles
+- The authenticated named-pipe bridge
+- The log pipeline
+- The provider (packaged or debug) and compatibility manifest verification
+
+**JavaScript has zero capabilities.** The React frontend (`apps/desktop/`) is
+configured with **no** Tauri capabilities:
+- No `shell` plugin — no spawning, no executing, no shell expansion
+- No `opener` plugin — no URL launching from the renderer
+- No `filesystem` plugin — no file read/write from the renderer
+- No `updater` plugin — no update logic from the renderer
+
+All authority flows from Rust to React through the snapshot channel and command
+API. The renderer never supplies URLs, paths, executables, argv, environment,
+PIDs, pipe names, run tokens, or lifecycle targets. Stale renderer data is
+never accepted because mutations carry no revision or target authority.
+
+The controller webview loads only bundled assets under strict CSP. The harness
+web UI opens in the system browser or a separate zero-capability webview —
+never inside the privileged controller webview.
+
+### Bridge security
+
+The child bridge (named pipe on Windows) enforces:
+
+- **DACL:** current-user and SYSTEM only
+- **Transport flag:** `PIPE_REJECT_REMOTE_CLIENTS` — no remote connections
+- **First-instance creation:** rejects pre-created pipe squatting
+- **Bounded frames:** 64 KiB maximum, UTF-8, length-prefixed JSON
+- **Token:** random 64-char lowercase hex per run, memory-only, never persisted
+- **Version check:** protocol version must match v1
+- **Sequence:** strictly increases per authenticated connection
+
+Forged, replayed, oversized, wrong-version, wrong-token, or wrong-host frames
+close the channel and terminate the Job. No secret is persisted across runs.
+
+### Job Object containment
+
+The unnamed kill-on-close Job Object is the fail-safe containment mechanism:
+
+- **Unnamed** — no global name to squat or collide with
+- **KILL_ON_JOB_CLOSE** — closing the last handle terminates all associated processes
+- **Assign before resume** — child starts `CREATE_SUSPENDED`, Job assigned, then resumed
+- **Non-inheritable handles** — the Job handle is not passed to the child
+- **Explicit allowlist** — `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` limits inherited handles
+  to stdio pipes and the bridge pipe only
+
+Kill-on-close means a supervisor crash, exit, or update takes the whole harness
+tree down with it. This is deliberate: the controller never leaves an
+unsupervised child behind.
+
+### Graceful / forced stop
+
+The stop sequence is cooperative-first with a hard deadline:
+
+1. Bridge sends `shutdown` to the child, which invokes upstream's whole-app
+   disposal (`await app.current?.fiber.dispose()` with `PROCESS_SHUTDOWN_TIMEOUT_MS = 5e3`).
+2. Controller waits beyond the 5-second upstream bound **and** for Job active-process
+   zero (HTTP and upgraded WebSocket sockets close by WebServer disposal).
+3. If active processes remain: `TerminateJobObject` is called. The controller waits
+   until the Job reaches active-process zero.
+4. **A forced stop is never reported as graceful.** The UI label is `stopped-forced`,
+   not `stopped-graceful`.
+
+### Secret handling
+
+- `PIMP_DSH_*`/`DSH_PIMP_*` environment values flow to the child process only.
+- State files and logs contain no secret values.
+- Secret redaction covers both the bridge token and any `PIMP_*`/`DSH_*` env values
+  before any sink (stdout, stderr, disk, display).
+- The diagnostic export has a review/redaction gate.
+- Corrupt or redirected state/log directories are ignored or quarantined.
+
+### What the desktop does not do
+
+- **No telemetry.** The controller sends no machine data to any endpoint.
+- **No LAN access.** The controller has no network outbound beyond what the harness
+  child legitimately opens.
+- **No Windows service.** The controller runs as a per-user resident application.
+  No elevation, no machine-wide registry, no service controls.
+- **No logged-in browser.** The harness web UI opens in the system browser or a
+  zero-capability webview. No existing login state, no profile control.
+- **No desktop automation.** No keyboard/mouse injection, no screen capture,
+  no OS-level interaction beyond tray presence and file explorer.
+
+### Unsigned development artifacts
+
+Locally built NSIS installers have no Authenticode signature. They are
+**development only** and must not be distributed. Browser downloads can trigger
+SmartScreen "not trusted" warnings. Production distributions require:
+
+1. **Authenticode signing** — `signtool` with OV or EV certificate for the
+   Windows executable (`*-setup.exe`).
+2. **Tauri update signatures** — a separate private key for the Tauri updater
+   plugin. This is mandatory and cannot be disabled.
+
+Dual signing is a **Phase 2** goal. The private key for Tauri updates is an
+operational responsibility: losing it bricks updates for installed users. Key
+escrow, backup, and planned trust-root rotation for old supported versions are
+part of Phase 2 planning.
+
+### Unsupported claims
+
+The desktop supervisor does **not** claim:
+
+- An updater is shipped in Phase 0. Tauri's updater plugin is available but
+  not configured. Enabling it requires a private signing key and HTTPS endpoint.
+- Microsoft Store or MSIX distribution. The installer is NSIS per-user only.
+- Full sandbox isolation. The harness child runs with the harness process's
+  authority; the sandbox applies to child commands, not the harness itself.
+- Cross-platform parity in Phase 0. The implementation targets Windows 10/11 x64
+  only. macOS/Linux support uses the same Tauri core but different process
+  adapters and transport (see [ADR-0002](adr/0002-tauri-desktop-supervisor.md)).
+
 ## What this distribution does not protect against
 
 - A malicious model or plugin that has been granted execution authority.

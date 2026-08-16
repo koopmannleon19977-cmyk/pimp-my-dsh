@@ -94,3 +94,83 @@ persistent interactive PTY.
   This is diagnostic noise of the restriction scheme, not an operational
   failure.
 - **FAT-class volumes are writable** under confined modes (no ACL support).
+
+## Desktop supervisor (Windows)
+
+### WebView2 on Windows
+
+Tauri uses **Microsoft Edge WebView2** to render the desktop controller UI.
+WebView2 is the Evergreen runtime — preinstalled and auto-updated via Edge
+updates on Windows 10/11. Five installer modes:
+
+| Mode | Size | Requirement |
+| --- | --- | --- |
+| `downloadBootstrapper` | +0 MB | Internet connection, default |
+| `embedBootstrapper` | ~1.8 MB | Internet (bootstrapper bundled in installer) |
+| `offlineInstaller` | ~127 MB | None (bundled installer) |
+| `fixedVersion` | ~180 MB | None (specific WebView2 version bundled) |
+| `skip` | +0 MB | WebView2 already installed (**not recommended**) |
+
+Air-gapped deployments must use `offlineInstaller` or `fixedVersion`. The
+installer picks one mode at build time.
+
+### NSIS installer
+
+The desktop ships an NSIS per-user installer (`*-setup.exe`):
+
+- **Per-user:** no elevation required, no machine-wide registry writes.
+  Installs under `AppData\Local` by default.
+- **Uninstall:** removes the application, Start menu/Desktop shortcuts, and
+  per-user uninstall registry entry. Controller state/logs and `DSH_HOME`
+  profile data are preserved.
+- **Unsigned local builds** trigger SmartScreen "not trusted" warnings when
+  downloaded via browser. They are development artifacts only.
+- **Production builds** require dual Authenticode signing (Phase 2):
+  `signtool` with an OV or EV certificate for the `.exe` and `.msi`.
+
+### Tauri tray and single instance
+
+- **Tray:** first-party `tray-icon` Cargo feature. Native notification-area
+  icon with context menu. Supported on Windows, macOS, Linux.
+- **Single instance:** official Tauri plugin. Windows fully supported via
+  named mutex. Prevents multiple resident controllers per user.
+
+### Process lifecycle primitives
+
+- **Hidden suspended launch:** `CREATE_NO_WINDOW` (no console flash) +
+  `CREATE_SUSPENDED` (primary thread starts suspended so the Job can be
+  assigned before execution).
+- **Explicit handle inheritance:** `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` limits
+  inherited handles to stdio pipes and the bridge pipe only. The Job handle
+  is retained non-inheritable by the controller.
+- **Unnamed kill-on-close Job Object:** `CreateJobObject` with a `NULL` name
+  (no global name to squat), `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Closing
+  the last handle terminates all processes and destroys the job. Nested jobs
+  are supported (Windows 8+).
+- **Tree stop:** primary mechanism is `TerminateJobObject`. The existing
+  `taskkill /T` fallback remains in repo docs. Node's `subprocess.kill()` is
+  **not** tree-kill on Windows — the controller never relies on it.
+- **PID reuse:** Windows PID reuse is real. The controller never kills or
+  adopts by PID, image path, or port. Authority is the live process HANDLE,
+  Job handle, and random run ID only.
+
+### Unsigned development artifacts
+
+Locally built NSIS installers have no Authenticode signature and are
+**development only**:
+
+- They trigger SmartScreen "not trusted" warnings on browser downloads.
+- Use them only for local development and testing.
+- Production distribution requires Authenticode signing (`signtool`) — Phase 2.
+
+### No Windows service
+
+The controller is a per-user resident application, not a Windows service.
+No elevation, no machine-wide registry writes, no service controls. Autostart
+(opt-in via Start Menu Startup `.lnk`) is a Phase 1 goal if requested.
+
+### Data and log paths on Windows
+
+State files, logs, and bridge pipe artifacts live under the per-user
+application data directory. The harness home (`DSH_HOME`) and managed profile
+directory must remain outside the writable workspace.

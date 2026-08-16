@@ -97,6 +97,201 @@ The distribution narrows upstream's posture in four ways, each documented in
    consent.
 4. **Community plugins gated** — a reviewed allowlist gate, not auto-install.
 
+## Desktop supervisor architecture
+
+The desktop supervisor is a per-user Tauri 2.11.5 application (`apps/desktop/`)
+that sits above the existing `pimp-my-dsh` CLI and provides persistent tray
+presence, process supervision, and structured health reporting on Windows
+10/11 x64.
+
+### Components
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Tray / Window (apps/desktop/ React, zero capabilities)  │
+│   get_snapshot · start_harness · stop_harness           │
+│   run_doctor · open_harness · reveal_log_folder         │
+│   set_theme · set_fixed_port                            │
+├─────────────────────────────────────────────────────────┤
+│ Tauri 2.11.5 core (Rust, src-tauri/)                    │
+│   State machine · Job Object · process supervisor        │
+│   Bridge (named pipe, token-auth) · log pipeline         │
+│   Provider (packaged / debug) · compatibility manifest   │
+├─────────────────────────────────────────────────────────┤
+│ DeepSeek Harness CLI (Node, child process)              │
+│   `pimp-dsh run --profile web` — validated boundary      │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Rendering technology
+
+Tauri on Windows uses **Microsoft Edge WebView2** to render the control
+surface. This is a web engine, not truly native rendering. The UI looks
+polished but does not produce pixels via the OS toolkit. WebView2 is the
+Evergreen runtime — auto-updated by Windows through Edge updates — but
+air-gapped deployments may choose `offlineInstaller` or `fixedVersion` at
+the cost of shipping browser patches themselves.
+
+### Strict frontend / native split
+
+**Rust owns all authority.** The Tauri controller owns:
+
+- The closed 13-state [state machine](#state-machine)
+- The unnamed [kill-on-close Job Object](https://learn.microsoft.com/windows/win32/procthread/job-objects)
+- Live process and Job handles
+- The authenticated bridge connection
+- The log pipeline
+- The provider (packaged or debug) and the compatibility manifest
+
+**JavaScript is a view only.** The React frontend (`apps/desktop/`) has
+**zero** Tauri capabilities: no `shell`, no `opener`, no `filesystem`, no
+`updater`. All spawning authority exists only in Rust. The controller
+webview loads only bundled assets under strict CSP. The harness web UI
+opens in the system browser or a separate zero-capability webview — never
+inside the privileged controller webview.
+
+### IPC: Rust to React
+
+The renderer communicates with Rust through eight commands. All are
+parameterless except `set_theme({theme})` and `set_fixed_port({port: number|null})`;
+accepted values are closed enums or ranges.
+
+| Command | Purpose |
+| --- | --- |
+| `get_snapshot` | Fetch the current Snapshot |
+| `start_harness` | Begin a supervised run |
+| `stop_harness` | Gracefully or forcibly stop a run |
+| `run_doctor` | Delegate to `pimp-dsh doctor` |
+| `open_harness` | Open the harness web UI (Rust constructs the READY URL) |
+| `reveal_log_folder` | Open the log directory in File Explorer |
+| `set_theme` | Change the UI theme |
+| `set_fixed_port` | Opt into a fixed port instead of dynamic |
+
+Rust emits a `supervisor://snapshot` channel carrying a complete **Snapshot v1**,
+never deltas. The renderer never supplies URLs, paths, executables, argv,
+environment, PIDs, pipe names, run tokens, or lifecycle targets. Stale renderer
+data is never accepted because mutations carry no revision or target authority.
+
+### State machine
+
+Closed `State` enum — every serialized transition increments `revision` exactly
+once and records a stable kebab-case `Reason`.
+
+| State | User-facing label |
+| --- | --- |
+| `stopped` | Stopped |
+| `preflighting` | Starting |
+| `starting` | Starting |
+| `ready` | Ready |
+| `running` | Running |
+| `stopping` | Stopping |
+| `stopped-graceful` | Stopped |
+| `stopped-forced` | Forced stop |
+| `failed-start` | Needs attention |
+| `crashed` | Needs attention |
+| `unmanaged` | Needs attention |
+| `update-pending` | Needs attention |
+| `updating` | Needs attention |
+
+Rules:
+
+- Start is idempotent in `preflighting`, `starting`, `ready`, `running`.
+- Stop is idempotent in `stopping`, `stopped-graceful`, `stopped-forced`.
+- Start during `stopping` is rejected.
+- Exactly one lifecycle mutex owns all transition execution.
+
+### Provider launch contract
+
+Two providers exist; both return only backend-owned absolute `node.exe`, CLI
+entry, working directory, and explicit environment. Rust always invokes Node
+with fixed argv:
+
+```
+CLI run --profile web -- --host 127.0.0.1 --port <0|validated fixed>
+```
+
+using `CreateProcessW` with `CREATE_NO_WINDOW | CREATE_SUSPENDED`, no shell,
+and an explicit inherited-handle allowlist.
+
+| Provider | When | Verifies |
+| --- | --- | --- |
+| **Packaged** | Production builds | Manifest, target, all exact versions, `node.exe` SHA-256, deterministic payload tree hash. Never consults PATH. |
+| **Development** | Debug config only | Absolute workspace identity plus installed versions. |
+
+The runtime payload lives under `apps/desktop/src-tauri/runtime/` and is
+generated only by staging.
+
+### Compatibility manifest v1
+
+Before any process is created, the provider verifies:
+
+```
+{schemaVersion:1, protocolVersion:1, controllerVersion:'0.1.0',
+ node:{version:'24.19.0', sha256}, pnpmVersion:'11.7.0',
+ distributionVersion:'0.1.0', dshVersion:'0.1.0-rc.6',
+ target:'x86_64-pc-windows-msvc', payloadSha256}
+```
+
+`additionalProperties:false`. If the manifest, target, versions, SHA-256, or
+payload hash mismatch, preflight fails before process creation. The
+distribution version, controller version, Node version, pnpm version, and DSH
+version are all exact pins — never ranges.
+
+### Child bridge v1
+
+The harness child communicates with the controller over a versioned,
+authenticated pipe:
+
+- **Transport:** named pipe (Windows), current-user/SYSTEM DACL, `PIPE_REJECT_REMOTE_CLIENTS`
+- **Protocol:** length-prefixed UTF-8 JSON, max 64 KiB, `additionalProperties:false`
+- **Common fields:** `{protocolVersion:1, type, runId, token, sequence}`
+- **Token:** 64 lowercase hex chars, memory-only, per-run random
+- **Sequence:** strictly increases per authenticated connection
+- **Child to Rust types:** `hello`, `ready`, `health`, `stopping`, `stopped`, `error`
+- **Rust to child:** `shutdown`
+
+On `ready`, the child sends additional fields: `{profile:'web', host:'127.0.0.1',
+port:1..65535, url:'http://127.0.0.1:<port>', distributionVersion:'0.1.0',
+dshVersion:'0.1.0-rc.6'}`. Rust authenticates token/run/version/sequence before
+type-specific parsing and constructs the endpoint itself from host+port. A
+supplied URL must exactly equal the normalized result but never becomes
+authority.
+
+### Logs
+
+`LogEvent` struct: `{runId:string|null, revision:u64, sequence:u64,
+timestamp:string, source:'supervisor'|'stdout'|'stderr'|'lifecycle'|'doctor',
+level:'trace'|'info'|'warning'|'error', message:string}`. UTF-8 replacement,
+ANSI stripping, HTML text rendering, 16 KiB per event, bounded in-memory
+queue. Disk writer failure switches once to drain-and-discard with one
+supervisor error — lifecycle remains operable. Secret redaction covers the
+token and values of case-insensitive `PIMP_DSH_*`/`DSH_PIMP_*` environment
+names before any sink.
+
+### Data and log paths
+
+State files, logs, and bridge artifacts live under the per-user application
+data directory. The harness home (`DSH_HOME`) and managed profile directory
+must remain outside the writable workspace. This keeps the agent from creating
+the watched global patch after preflight or mutating its own managed profile
+during a session.
+
+### Close and quit
+
+Closing the application window hides the tray controller (it remains resident
+while a harness run exists). An explicit **Quit** follows the stop policy — it
+never silently detaches the harness.
+
+### Relationship to the existing CLI
+
+The desktop supervisor composes with — not replaces — the existing
+`pimp-my-dsh` CLI. The CLI remains the authoritative launch boundary:
+managed-profile checks, no-global-patch rule, environment promotion, exact
+pin, and end-of-options boundary are all preserved. The controller never
+reimplements them. This continues the no-fork decision recorded in
+[ADR-0001](adr/0001-no-fork.md) and the new Tauri decision in
+[ADR-0002](adr/0002-tauri-desktop-supervisor.md).
+
 ## Why no fork
 
 The decision to consume upstream as an exact npm dependency is recorded in

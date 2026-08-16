@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh/schema/supervisor-protocol-v1.schema.json",
+  "title": "pimp-my-dsh desktop supervisor child-bridge protocol",
+  "description": "A single decoded length-prefixed frame of the desktop supervisor child bridge. Frames are UTF-8 JSON bodies (max 64 KiB) preceded by a 4-byte little-endian unsigned length prefix. Every object is closed: unknown fields are rejected. Common fields are protocolVersion, type, runId, token, and sequence; the Rust-to-child shutdown frame carries only protocolVersion, type, and sequence.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/ready" },
+    { "$ref": "#/$defs/health" },
+    { "$ref": "#/$defs/stopping" },
+    { "$ref": "#/$defs/stopped" },
+    { "$ref": "#/$defs/error" },
+    { "$ref": "#/$defs/shutdown" }
+  ],
+  "$defs": {
+    "protocolVersion": { "const": 1 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "runId": { "type": "string", "minLength": 1 },
+    "token": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "host": { "const": "127.0.0.1" },
+    "profile": { "const": "web" },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "url": { "type": "string", "pattern": "^http://127\\.0\\.0\\.1:[0-9]{1,5}$" },
+    "distributionVersion": { "const": "0.1.0" },
+    "dshVersion": { "const": "0.1.0-rc.6" },
+    "message": { "type": "string" },
+    "hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "type", "runId", "token", "sequence"],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "type": { "const": "hello" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "token": { "$ref": "#/$defs/token" },
+        "sequence": { "$ref": "#/$defs/sequence" }
+      }
+    },
+    "ready": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "type",
+        "runId",
+        "token",
+        "sequence",
+        "profile",
+        "host",
+        "port",
+        "url",
+        "distributionVersion",
+        "dshVersion"
+      ],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "type": { "const": "ready" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "token": { "$ref": "#/$defs/token" },
+        "sequence": { "$ref": "#/$defs/sequence" },
+        "profile": { "$ref": "#/$defs/profile" },
+        "host": { "$ref": "#/$defs/host" },
+        "port": { "$ref": "#/$defs/port" },
+        "url": { "$ref": "#/$defs/url" },
+        "distributionVersion": { "$ref": "#/$defs/distributionVersion" },
+        "dshVersion": { "$ref": "#/$defs/dshVersion" }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "type", "runId", "token", "sequence"],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "type": { "const": "health" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "token": { "$ref": "#/$defs/token" },
+        "sequence": { "$ref": "#/$defs/sequence" }
+      }
+    },
+    "stopping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "type", "runId", "token", "sequence"],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "type": { "const": "stopping" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "token": { "$ref": "#/$defs/token" },
+        "sequence": { "$ref": "#/$defs/sequence" }
+      }
+    },
+    "stopped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "type", "runId", "token", "sequence"],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "type": { "const": "stopped" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "token": { "$ref": "#/$defs/token" },
+        "sequence": { "$ref": "#/$defs/sequence" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "type", "runId", "token", "sequence", "message"],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "type": { "const": "error" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "token": { "$ref": "#/$defs/token" },
+        "sequence": { "$ref": "#/$defs/sequence" },
+        "message": { "$ref": "#/$defs/message" }
+      }
+    },
+    "shutdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "type", "sequence"],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "type": { "const": "shutdown" },
+        "sequence": { "$ref": "#/$defs/sequence" }
+      }
+    }
+  }
+}

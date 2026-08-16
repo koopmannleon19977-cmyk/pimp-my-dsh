@@ -24,3 +24,10 @@ Thumbs.db
 coverage/
 *.lcov
 
+# Desktop app build artifacts
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/runtime/
+apps/desktop/src-tauri/.runtime-staging-*/
+apps/desktop/src-tauri/.runtime-backup-*/
+apps/desktop/src-tauri/gen/
+

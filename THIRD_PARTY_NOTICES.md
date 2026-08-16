@@ -98,3 +98,27 @@ this repository is the authority on the exact installed closure.
 functionality is consumed through the published npm packages. The only
 distribution-owned code is the root plugin (`src/plugin.ts`) and the CLI
 (`src/cli.ts`), both original works under this repository's MIT license.
+
+## Desktop supervisor runtime
+
+The Windows desktop control surface (`apps/desktop`) bundles and references the
+following additional components at runtime:
+
+| Component | Version | License |
+| --- | --- | --- |
+| [Node.js](https://nodejs.org/) runtime (`node.exe`) | 24.19.0 (win-x64) | MIT (binary distribution aggregates additional per-component notices) |
+| [Tauri](https://tauri.app/) framework and Rust crates (`tauri`, `tao`, `wry`) | 2.11.5 | MIT OR Apache-2.0 |
+| [Tauri Single Instance plugin](https://github.com/tauri-apps/plugins-workspace/tree/single-instance-v2.4.3/plugins/single-instance) | 2.4.3 | MIT OR Apache-2.0 |
+| [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) | evergreen (bootstrapped at install time) | Microsoft Software License Terms (not redistributed by this project) |
+| [NSIS](https://nsis.sourceforge.io/) installer runtime | 3.x | zlib/libpng |
+| [React](https://react.dev/) | 19.2.8 | MIT |
+| [Fluent UI React Components](https://react.fluentui.dev/) (`@fluentui/react-components`) | 9.74.6 | MIT |
+| [Fluent UI React Icons](https://github.com/microsoft/fluentui-system-icons) (`@fluentui/react-icons`) | 2.0.337 | MIT |
+| [Vite](https://vite.dev/) build tooling | 8.2.1 | MIT |
+| [TypeScript](https://www.typescriptlang.org/) compiler | 6.0.3 | Apache-2.0 |
+
+The supervisor bundles its own copy of the Node.js runtime, downloaded from the
+official `nodejs.org` distribution archive and SHA-256-pinned at build time; it
+never resolves Node from `PATH` at runtime. WebView2 is installed by the NSIS
+installer's `downloadBootstrapper` mode and is serviced by Microsoft, not shipped
+by this repository.

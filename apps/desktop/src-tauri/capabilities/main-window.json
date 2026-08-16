@@ -1,0 +1,6 @@
+{
+  "identifier": "main-window",
+  "description": "Minimal permissions for the pimp-my-dsh supervisor control window. Deny-by-default: no shell, opener, filesystem, updater, or HTTP access. The eight supervisor commands are application commands (not plugin commands) and are therefore always invokable; core:default grants the window/event/tray/menu/path/resources/image/app/webview basics the view needs (notably core:event:default for supervisor://snapshot).",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
