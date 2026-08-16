@@ -1,0 +1,172 @@
+# Security model
+
+`pimp-my-dsh` is a thin distribution over DeepSeek Harness. It composes the
+upstream plugin bundles through a patch layer and one distribution-owned plugin.
+It adds no native execution primitives of its own. The security posture is
+inherited from upstream and narrowed by this distribution's configuration.
+
+This document is the authoritative statement of that posture. It is honest about
+what is and is not a boundary.
+
+## Threat model
+
+The primary threats this distribution is designed to reduce:
+
+1. **Outbound data exfiltration via telemetry** — a fresh upstream install can
+   report session content, tool data, prompts, and workspace paths. This
+   distribution eliminates that path.
+2. **Server-side request forgery (SSRF)** — the upstream HTTP fetch provider
+   does not block private or loopback destinations. This distribution disables
+   it.
+3. **Unintended filesystem writes by a model or plugin** — the upstream Windows
+   sandbox restricts writes. This distribution keeps that boundary and
+   discloses its limits.
+4. **Supply-chain risk from community plugins** — this distribution admits
+   community plugins only through a human review gate.
+
+This distribution does **not** attempt to defend against a malicious model or a
+malicious plugin that has already been granted execution authority. The Windows
+sandbox is a write boundary, not an isolation boundary.
+
+## Telemetry: disabled unconditionally
+
+Upstream telemetry honors a hard process-level kill switch. The wrapper forces
+`DSH_TELEMETRY_DISABLED=1`, removes mode and endpoint overrides, and the bundle
+also disables the telemetry backend row. Therefore:
+
+- No session content, tool data, prompts, or workspace paths are transmitted.
+- Setting `DSH_TELEMETRY_MODE=FULL` or `DSH_TELEMETRY_MODE=FEEDBACK_ONLY` has
+  **no effect**.
+- Later user/profile patch layers cannot bypass the process-level kill switch.
+- The `update-check` CLI command performs a version lookup only and sends no
+  data about the local machine.
+
+## Windows sandbox: partial write confinement
+
+On Windows, command execution is confined by the upstream ACL restricted-token
+runner (`@deepseek-ai/dsh-sandbox-windows-acl`). The mechanism duplicates the
+caller's token into a `WRITE_RESTRICTED` token whose restricting SIDs carry
+workspace and private-temp write capabilities.
+
+The runner reports `enforcement: 'partial'`. This is deliberate and honest:
+
+- **Writes are restricted; reads, network, and process visibility are not.**
+  `WRITE_RESTRICTED` intersects write accesses only. A confined child can read
+  any caller-readable file and open sockets.
+- **`Everyone` grants remain ambient write authority.** `Everyone` must stay in
+  the restricting list for early DLL initialization and CNG to work. An
+  external NTFS object whose DACL grants `Everyone` a requested write right
+  clears both access checks and stays writable.
+- **Hard links are file-object aliases.** An inheritable workspace ACE
+  propagated onto an existing hard link changes the one underlying file
+  security descriptor, so the same object is writable through an external
+  alias. Ordinary pnpm installations use hard links into their
+  content-addressable store, so rejecting multiply-linked files is not viable.
+- **FAT-class volumes have no ACLs** and are writable under confined modes.
+- **Console isolation is unavailable.** Confined children share the host
+  console; stdio redirection is pipe-based.
+
+The shipped default mode is `workspace-write`: the workspace and a private
+per-session temp subdirectory carry write grants, and other ACL-addressable
+writes are denied except for the documented boundaries above. Escalation to
+`danger-full-access` requires an approval prompt.
+
+**Do not treat a confined session as a security boundary against a malicious
+model or plugin.** The sandbox reduces accidental or careless writes; it does
+not contain a determined adversary.
+
+## Web fetch and browser automation: disabled
+
+The upstream HTTP fetch provider (`@deepseek-ai/dsh-web-fetch-http`) is an
+**SSRF primitive**: it does not block private, loopback, link-local, multicast,
+or otherwise non-public destinations, and it does not perform
+DNS-resolve-then-validate. Until such protection exists, it must not be enabled
+in a deployment that can reach sensitive internal network targets.
+
+This distribution:
+
+- Does not enable `web_fetch` or `web_search`.
+- Does not enable any browser automation.
+- Has no safe public-network provider configured.
+
+There is no supported way to turn these on in this distribution. If a future
+upstream release ships a safe provider, that would be a roadmap item, not a
+silent enablement.
+
+## LSP: explicit opt-in, unsandboxed
+
+Language-server navigation (go-to-definition, find-references,
+go-to-implementation, hover) is disabled by default. It is enabled only by an
+explicit opt-in (`PIMP_DSH_ENABLE_LSP`).
+
+Configured language servers run **unsandboxed**. They execute with the full
+authority of the harness process — the same authority as the model and the
+shell tools. A language server is arbitrary code; enabling LSP means trusting
+that code.
+
+Only enable LSP with language servers you trust, and prefer servers that do not
+need network access.
+
+## Community plugins: reviewed allowlist gate
+
+This distribution does **not** auto-install, auto-activate, or catalog
+community plugins. There is no implemented plugin registry and no automatic
+plugin discovery.
+
+A community plugin enters the distribution only through the **reviewed
+allowlist gate**, which is a policy, not code:
+
+1. A human reviews the plugin's source, license, exact version, permission
+   surface, and Windows behavior.
+2. The plugin is pinned to an exact version in the allowlist.
+3. The allowlist is the only path by which a community plugin is installed.
+
+The gate is deliberately conservative. A plugin that requests broad filesystem
+or network access, or that has not been reviewed for Windows behavior, is not
+admitted.
+
+## Setup and secrets handling
+
+- `setup` invokes the distribution's exact `pnpm@11.7.0` JavaScript entry
+  through `node` with `shell: false`; attacker-controlled checkout paths are
+  never parsed by `cmd.exe`.
+- Dependency installation passes `--ignore-scripts` and `--ignore-pnpmfile`,
+  supplies a minimal allowlisted environment without `PIMP_DSH_*` secrets, and
+  runs in a fresh staging directory.
+- Profile names are allowlisted, writes are lexically contained under
+  `DSH_HOME`, and existing symbolic-link/junction redirects are rejected by
+  canonical-path checks.
+- A completed staging profile atomically replaces only a profile carrying this
+  distribution's valid ownership marker. Existing dependency/bundle entries
+  are not preserved, so `--force` cannot admit unreviewed plugins.
+- `run` revalidates the exact marker, manifest, shipped patch, and installed
+  bundle link before invoking DSH. Missing or modified profiles are rejected;
+  upstream's automatic `web`/`headless` initialization is never reachable.
+- Forwarded app arguments follow an explicit upstream end-of-options boundary,
+  so `--profile` and `--patch` tokens cannot become launcher authority.
+- A global `$DSH_HOME/cordis.patch.yml` is rejected because upstream composes it
+  above the managed profile and it could otherwise weaken these controls.
+- The harness home and managed profile directory must remain outside the
+  writable workspace. This keeps the agent from creating the watched global
+  patch after preflight or mutating its own managed profile during a session.
+- The CLI never logs secret values.
+- Public `PIMP_DSH_*` values are promoted into protected `DSH_PIMP_*` child
+  variables before upstream repository `.env` loading. The public names are
+  removed from the child environment.
+- `PIMP_DSH_API_KEY` is read but never echoed, printed, or included in
+  structured CLI output.
+- Structured CLI results (`--json`) contain only non-secret status and
+  diagnostic fields.
+
+## What this distribution does not protect against
+
+- A malicious model or plugin that has been granted execution authority.
+- Reads of caller-readable files by a confined child.
+- Network egress by a confined child.
+- A malicious language server (LSP is unsandboxed).
+- A malicious community plugin admitted through the review gate.
+- Host compromise via a vulnerability in upstream or in a dependency.
+
+## Reporting
+
+Report vulnerabilities privately. See [SECURITY.md](../SECURITY.md).

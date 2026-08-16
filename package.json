@@ -1,0 +1,52 @@
+{
+  "name": "pimp-my-dsh",
+  "version": "0.1.0",
+  "description": "A Windows-first distribution of DeepSeek Harness with safe feasibility prototype",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/plugin.js",
+  "bin": {
+    "pimp-dsh": "dist/cli.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "profiles",
+    "schema",
+    "docs",
+    "SECURITY.md",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "pretest": "pnpm run build",
+    "test": "vitest run",
+    "pimp-dsh": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-lsp": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.6",
+    "pnpm": "11.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

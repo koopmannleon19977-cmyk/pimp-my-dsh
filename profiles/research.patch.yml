@@ -1,0 +1,13 @@
+- id: tool-bash
+  disabled: true
+
+- id: tool-pwsh
+  disabled: true
+
+- id: tool-str-replace-editor
+  disabled: true
+
+- id: tool-web
+  config:
+    search: false
+    fetch: false

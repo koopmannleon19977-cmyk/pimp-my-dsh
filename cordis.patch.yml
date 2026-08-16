@@ -1,0 +1,120 @@
+# pimp-my-dsh bundle layer for @deepseek-ai/dsh 0.1.0-rc.6.
+# A DSH patch replaces a targeted row's whole config; every override below
+# therefore restates the complete configuration owned by this distribution.
+
+- id: llm-pi-ai
+  config:
+    providers:
+      pimp-openai:
+        displayName: Pimp OpenAI-compatible
+        apiKeyEnv: DSH_PIMP_API_KEY
+        api: openai-responses
+        baseURL: !!js process.env.DSH_PIMP_BASE_URL ?? 'https://api.openai.com/v1'
+        models:
+          - id: !!js process.env.DSH_PIMP_MODEL ?? 'gpt-5.4'
+            name: !!js process.env.DSH_PIMP_MODEL ?? 'gpt-5.4'
+            contextWindow: 262144
+            maxTokens: 32768
+
+- id: agent-default-model
+  config:
+    provider: pimp-openai
+    model: !!js process.env.DSH_PIMP_MODEL ?? 'gpt-5.4'
+
+# Hard-disabled. DSH_TELEMETRY_MODE cannot reactivate this row.
+- id: session-telemetry-otel
+  disabled: true
+
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions')
+
+- id: session-query-sqlite
+  config:
+    path: !!js dshHomePath('session-index.sqlite')
+    openAt: first-search
+
+# The Windows ACL restricted-token backend reports `partial` enforcement:
+# filesystem writes are constrained, while network/process visibility are not.
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js process.cwd()
+
+- id: approval
+  config:
+    policy: ask
+
+- id: permission
+  config:
+    defaultPreset: workspace-write
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: ask
+
+# Restate upstream platform gates explicitly: Windows receives only the
+# PowerShell stack; POSIX receives only Bash.
+- id: bash-sandbox
+  disabled: !!js process.platform === 'win32'
+  config:
+    timeoutMs: 60000
+
+- id: pwsh-sandbox
+  disabled: !!js process.platform !== 'win32'
+
+- id: tool-bash
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  disabled: !!js process.platform !== 'win32'
+
+# Both model-facing web tools stay disabled. The upstream HTTP fetch provider
+# is not mounted because it does not block private-network SSRF.
+- id: tool-web
+  config:
+    search: false
+    fetch: false
+
+- insert:
+    - id: pimp-my-dsh
+      name: pimp-my-dsh
+
+    # LSP servers are trusted local processes and receive no DSH sandbox.
+    # All three rows remain dormant unless the operator explicitly opts in.
+    - id: lsp
+      name: '@deepseek-ai/dsh-lsp'
+      disabled: !!js process.env.DSH_PIMP_ENABLE_LSP !== '1'
+
+    - id: lsp-stdio
+      name: '@deepseek-ai/dsh-lsp-stdio'
+      disabled: !!js process.env.DSH_PIMP_ENABLE_LSP !== '1'
+      config:
+        servers:
+          typescript:
+            command: typescript-language-server
+            args: [--stdio]
+            extensionToLanguage:
+              .ts: typescript
+              .tsx: typescriptreact
+              .js: javascript
+              .jsx: javascriptreact
+          pyright:
+            command: pyright-langserver
+            args: [--stdio]
+            extensionToLanguage:
+              .py: python
+
+    - id: tool-lsp
+      name: '@deepseek-ai/dsh-tool-lsp'
+      disabled: !!js process.env.DSH_PIMP_ENABLE_LSP !== '1'
+      config:
+        maxLocations: 100
+        maxResultChars: 16000
+        timeoutMs: 60000
