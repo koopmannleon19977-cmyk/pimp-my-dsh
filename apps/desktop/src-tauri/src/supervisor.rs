@@ -771,6 +771,10 @@ impl Supervisor {
                                 for d in drains.drain(..) {
                                     let _ = d.join();
                                 }
+                                self.record_run_end(
+                                    crate::types::RunOutcome::FailedStart,
+                                    format!("ready reported port {port}, expected fixed {fp}"),
+                                );
                                 self.finish_run(&cancel);
                                 self.emit();
                                 return;
@@ -788,6 +792,10 @@ impl Supervisor {
                             for d in drains.drain(..) {
                                 let _ = d.join();
                             }
+                            self.record_run_end(
+                                crate::types::RunOutcome::Crashed,
+                                "duplicate ready frame".to_string(),
+                            );
                             self.finish_run(&cancel);
                             self.emit();
                             return;
@@ -806,6 +814,10 @@ impl Supervisor {
                             for d in drains.drain(..) {
                                 let _ = d.join();
                             }
+                            self.record_run_end(
+                                crate::types::RunOutcome::FailedStart,
+                                "readiness_received out of state".to_string(),
+                            );
                             self.finish_run(&cancel);
                             self.emit();
                             return;
