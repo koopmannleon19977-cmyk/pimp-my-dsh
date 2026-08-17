@@ -16,6 +16,7 @@ export type LifecycleState =
   | "updating";
 
 export type ThemePreference = "system" | "light" | "dark";
+export type RestartPolicy = "never" | "always";
 export type LogLevel = "trace" | "info" | "warning" | "error";
 export type LogSource = "supervisor" | "stdout" | "stderr" | "lifecycle" | "doctor";
 
@@ -64,6 +65,7 @@ export interface LogEvent {
 export interface Settings {
   readonly theme: ThemePreference;
   readonly fixedPort: number | null;
+  readonly restartPolicy: RestartPolicy;
 }
 
 export interface CompatibilityView {

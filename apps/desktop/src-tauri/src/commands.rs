@@ -10,7 +10,7 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::supervisor::Supervisor;
-use crate::types::{Snapshot, Theme};
+use crate::types::{RestartPolicy, Snapshot, Theme};
 
 static SUPERVISOR: OnceLock<Arc<Supervisor>> = OnceLock::new();
 
@@ -61,6 +61,10 @@ pub fn set_fixed_port(port: Option<u16>) -> Result<(), String> {
     supervisor().set_fixed_port(port)
 }
 
+pub fn set_restart_policy(policy: RestartPolicy) -> Result<(), String> {
+    supervisor().set_restart_policy(policy)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +87,14 @@ mod tests {
         assert!(set_theme(Theme::Dark).is_ok());
         let snap = get_snapshot();
         assert_eq!(snap.settings.theme, Theme::Dark);
+    }
+
+    #[test]
+    fn set_restart_policy_stores_value() {
+        let _ = init_supervisor();
+        assert!(set_restart_policy(RestartPolicy::Always).is_ok());
+        let snap = get_snapshot();
+        assert_eq!(snap.settings.restart_policy, RestartPolicy::Always);
     }
 
     #[test]

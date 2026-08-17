@@ -53,12 +53,13 @@ import type {
   LogLevel,
   LogSource,
   RecentRun,
+  RestartPolicy,
   Snapshot,
   ThemePreference,
 } from "./types";
 
 type View = "overview" | "activity" | "settings";
-type PendingAction = "start" | "stop" | "doctor" | "open" | "reveal" | "theme" | "port" | "copy" | null;
+type PendingAction = "start" | "stop" | "doctor" | "open" | "reveal" | "theme" | "port" | "restart" | "copy" | null;
 
 type StatePresentation = {
   readonly label: string;
@@ -290,6 +291,10 @@ export function App({ bridge = tauriSupervisorBridge }: { readonly bridge?: Supe
     void run("theme", () => bridge.setTheme(nextTheme), `Theme preference set to ${nextTheme}.`);
   }, [bridge, run]);
 
+  const setRestartPolicy = useCallback((next: RestartPolicy) => {
+    void run("restart", () => bridge.setRestartPolicy(next), `Restart policy set to ${next}.`);
+  }, [bridge, run]);
+
   const copyLogs = useCallback(() => {
     if (filteredLogs.length === 0 || !navigator.clipboard?.writeText) {
       setAnnouncement("No visible logs are available to copy.");
@@ -417,6 +422,9 @@ export function App({ bridge = tauriSupervisorBridge }: { readonly bridge?: Supe
               <div className="section-heading"><div><Text as="h2" id="settings-heading" size={600} weight="semibold">Settings</Text><Text className="secondary-text" block>Preferences are applied by the supervisor.</Text></div></div>
               <Card><CardHeader header={<Text weight="semibold">Appearance</Text>} description={<Text className="secondary-text">Use the system setting or choose a fixed application theme.</Text>} />
                 <div className="settings-field"><Label htmlFor="theme-preference">Theme</Label><Dropdown id="theme-preference" value={theme} selectedOptions={[theme]} disabled={pending === "theme"} onOptionSelect={(_, data) => setTheme(data.optionValue as ThemePreference)}><Option value="system">System</Option><Option value="light">Light</Option><Option value="dark">Dark</Option></Dropdown><Text className="secondary-text">High contrast and reduced-motion preferences remain controlled by Windows.</Text></div>
+              </Card>
+              <Card><CardHeader header={<Text weight="semibold">Recovery</Text>} description={<Text className="secondary-text">Choose whether a crash restarts the harness automatically.</Text>} />
+                <div className="settings-field"><Label htmlFor="restart-policy">On crash</Label><Dropdown id="restart-policy" value={snapshot.settings.restartPolicy} selectedOptions={[snapshot.settings.restartPolicy]} disabled={pending === "restart"} onOptionSelect={(_, data) => setRestartPolicy(data.optionValue as RestartPolicy)}><Option value="never">Never restart</Option><Option value="always">Always restart</Option></Dropdown><Text className="secondary-text">Graceful and forced stops never auto-restart.</Text></div>
               </Card>
               <Card><CardHeader header={<Text weight="semibold">Network</Text>} description={<Text className="secondary-text">Leave the port automatic unless a local policy requires a fixed value.</Text>} />
                 <FixedPortField value={snapshot.settings.fixedPort} disabled={pending === "port" || snapshot.busy} onSave={(port) => void run("port", () => bridge.setFixedPort(port), port === null ? "Automatic port selection restored." : `Fixed port set to ${port}.`)} />

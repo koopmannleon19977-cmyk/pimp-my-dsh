@@ -468,6 +468,15 @@ impl Supervisor {
         Ok(())
     }
 
+    pub fn set_restart_policy(self: &Arc<Self>, policy: crate::types::RestartPolicy) -> Result<(), String> {
+        {
+            let mut res = self.resources.lock().expect("resources lock");
+            res.settings.restart_policy = policy;
+        }
+        self.emit();
+        Ok(())
+    }
+
     fn set_compat(&self, verified: bool) {
         let mut res = self.resources.lock().expect("resources lock");
         res.compatibility.verified = verified;
@@ -509,6 +518,18 @@ impl Supervisor {
         res.recent_runs.truncate(10);
         // Best-effort persist; the in-memory list is authoritative for the UI.
         let _ = save_runs(&res.recent_runs);
+    }
+
+    /// Auto-restart opt-in: after a crash (never a graceful/forced stop or a
+    /// failed start), start again only when the policy says Always.
+    fn maybe_restart(self: &Arc<Self>) {
+        let policy = {
+            let res = self.resources.lock().expect("resources lock");
+            res.settings.restart_policy
+        };
+        if policy == crate::types::RestartPolicy::Always {
+            let _ = self.start();
+        }
     }
 
     /// Terminate the Job, wait for it to empty, then record the terminal state.
@@ -733,6 +754,7 @@ impl Supervisor {
                         );
                         self.finish_run(&cancel);
                         self.emit();
+                        self.maybe_restart();
                         return;
                     }
                     self.log(
@@ -798,6 +820,7 @@ impl Supervisor {
                             );
                             self.finish_run(&cancel);
                             self.emit();
+                            self.maybe_restart();
                             return;
                         }
                         ready_received = true;
@@ -881,6 +904,7 @@ impl Supervisor {
                         }
                         self.finish_run(&cancel);
                         self.emit();
+                        self.maybe_restart();
                         return;
                     }
                     BridgeEvent::Closed => {
@@ -904,6 +928,7 @@ impl Supervisor {
                         );
                             self.finish_run(&cancel);
                             self.emit();
+                            self.maybe_restart();
                             return;
                         }
                     }

@@ -84,6 +84,11 @@ mod desktop_app {
         commands::set_fixed_port(port)
     }
 
+    #[tauri::command]
+    fn set_restart_policy(policy: types::RestartPolicy) -> Result<(), String> {
+        commands::set_restart_policy(policy)
+    }
+
     fn focus_main(app: &tauri::AppHandle) {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.show();
@@ -162,7 +167,8 @@ mod desktop_app {
                 open_harness,
                 reveal_log_folder,
                 set_theme,
-                set_fixed_port
+                set_fixed_port,
+                set_restart_policy
             ])
             .build(tauri::generate_context!())
             .expect("error while building the tauri application")

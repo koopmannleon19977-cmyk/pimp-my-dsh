@@ -22,6 +22,14 @@ pub enum Theme {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestartPolicy {
+    #[default]
+    Never,
+    Always,
+}
+
 /// User-adjustable supervisor settings. `fixed_port` is the opt-in compatibility
 /// port (1..=65535); `None` means dynamic (`--port 0`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +37,7 @@ pub enum Theme {
 pub struct Settings {
     pub theme: Theme,
     pub fixed_port: Option<u16>,
+    pub restart_policy: RestartPolicy,
 }
 
 impl Default for Settings {
@@ -36,6 +45,7 @@ impl Default for Settings {
         Settings {
             theme: Theme::System,
             fixed_port: None,
+            restart_policy: RestartPolicy::Never,
         }
     }
 }
@@ -208,6 +218,7 @@ mod tests {
         let s = Settings {
             theme: Theme::Dark,
             fixed_port: Some(3080),
+            restart_policy: RestartPolicy::Never,
         };
         let v: serde_json::Value = serde_json::to_value(&s).unwrap();
         assert_eq!(v["theme"], "dark");

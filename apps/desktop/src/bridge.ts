@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   SUPERVISOR_PROTOCOL_VERSION,
   type Snapshot,
+  type RestartPolicy,
   type ThemePreference,
 } from "./types";
 
@@ -15,6 +16,7 @@ const commands = {
   revealLogFolder: "reveal_log_folder",
   setTheme: "set_theme",
   setFixedPort: "set_fixed_port",
+  setRestartPolicy: "set_restart_policy",
 } as const;
 
 const snapshotEvent = "supervisor://snapshot";
@@ -28,6 +30,7 @@ export interface SupervisorBridge {
   revealLogFolder(): Promise<void>;
   setTheme(theme: ThemePreference): Promise<void>;
   setFixedPort(port: number | null): Promise<void>;
+  setRestartPolicy(policy: RestartPolicy): Promise<void>;
   subscribe(onSnapshot: (snapshot: Snapshot) => void): Promise<() => void>;
 }
 
@@ -76,6 +79,12 @@ export const tauriSupervisorBridge: SupervisorBridge = {
   async setFixedPort(port) {
     assertFixedPort(port);
     await invoke<void>(commands.setFixedPort, { port });
+  },
+  async setRestartPolicy(policy) {
+    if (policy !== "never" && policy !== "always") {
+      throw new TypeError("Restart policy must be never or always.");
+    }
+    await invoke<void>(commands.setRestartPolicy, { policy });
   },
   async subscribe(onSnapshot) {
     return listen<Snapshot>(snapshotEvent, (event) => {
