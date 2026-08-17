@@ -477,6 +477,15 @@ impl Supervisor {
         Ok(())
     }
 
+    pub fn set_notifications_enabled(self: &Arc<Self>, enabled: bool) -> Result<(), String> {
+        {
+            let mut res = self.resources.lock().expect("resources lock");
+            res.settings.notifications_enabled = enabled;
+        }
+        self.emit();
+        Ok(())
+    }
+
     fn set_compat(&self, verified: bool) {
         let mut res = self.resources.lock().expect("resources lock");
         res.compatibility.verified = verified;

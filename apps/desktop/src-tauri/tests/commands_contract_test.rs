@@ -2,7 +2,9 @@
 //! closed theme enum and a validated fixed port. Arbitrary strings (URLs, paths, executables) are
 //! rejected at the serde boundary before any side effect.
 
-use pimp_dsh_desktop::commands::{init_supervisor, set_fixed_port, set_theme};
+use pimp_dsh_desktop::commands::{
+    get_snapshot, init_supervisor, set_fixed_port, set_notifications_enabled, set_theme,
+};
 use pimp_dsh_desktop::types::Theme;
 use serde_json::Value;
 
@@ -61,4 +63,11 @@ fn set_fixed_port_rejects_zero() {
         set_fixed_port(Some(0)).is_err(),
         "port 0 is reserved for the OS-assigned dynamic path"
     );
+}
+
+#[test]
+fn set_notifications_enabled_stores_value() {
+    init_supervisor();
+    assert!(set_notifications_enabled(true).is_ok());
+    assert_eq!(get_snapshot().settings.notifications_enabled, true);
 }

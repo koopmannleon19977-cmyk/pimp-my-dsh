@@ -167,7 +167,7 @@ Locally built NSIS installers have no Authenticode signature and are
 
 The controller is a per-user resident application, not a Windows service.
 No elevation, no machine-wide registry writes, no service controls. Autostart
-(opt-in via Start Menu Startup `.lnk`) is a Phase 1 goal if requested.
+  is an explicit opt-in via a per-user HKCU Run key (first-party `tauri-plugin-autostart`); no machine-wide registry writes and no COM/IShellLink code.
 
 ### Data and log paths on Windows
 

@@ -35,9 +35,11 @@ mod desktop_app {
 
     use std::time::Duration;
 
-    use tauri::menu::{Menu, MenuItem};
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
     use tauri::{Emitter, Manager, WindowEvent};
+    use tauri_plugin_autostart::ManagerExt;
+    use tauri_plugin_notification::NotificationExt;
 
     use crate::state::State;
 
@@ -89,6 +91,25 @@ mod desktop_app {
         commands::set_restart_policy(policy)
     }
 
+    #[tauri::command]
+    fn is_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+        app.autolaunch().is_enabled().map_err(|e| e.to_string())
+    }
+
+    #[tauri::command]
+    fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+        if enabled {
+            app.autolaunch().enable().map_err(|e| e.to_string())
+        } else {
+            app.autolaunch().disable().map_err(|e| e.to_string())
+        }
+    }
+
+    #[tauri::command]
+    fn set_notifications_enabled(enabled: bool) -> Result<(), String> {
+        commands::set_notifications_enabled(enabled)
+    }
+
     fn focus_main(app: &tauri::AppHandle) {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.show();
@@ -117,14 +138,21 @@ mod desktop_app {
             .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
                 focus_main(app);
             }))
+            .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                None,
+            ))
             .setup(|app| {
                 let supervisor = commands::init_supervisor();
                 let resource_dir = app.path().resource_dir().ok();
                 let emitter = app.handle().clone();
                 let auto_opened = std::sync::Arc::new(std::sync::Mutex::new(None::<u64>));
+                let toast_state = std::sync::Arc::new(std::sync::Mutex::new(None::<State>));
                 supervisor.set_emitter(resource_dir, {
                     let emitter = emitter.clone();
                     let auto_opened = auto_opened.clone();
+                    let toast_state = toast_state.clone();
                     move |snapshot| {
                         // Product-first: on reaching Running, bring the harness
                         // webview forward and demote the lobby to the tray. Guard
@@ -140,6 +168,30 @@ mod desktop_app {
                                     if let Some(main) = emitter.get_webview_window("main") {
                                         let _ = main.hide();
                                     }
+                                }
+                            }
+                        }
+                        // Toast on state transitions (once per state, not per
+                        // revision) when notifications are enabled.
+                        if snapshot.settings.notifications_enabled {
+                            let body = match snapshot.state {
+                                State::Running => Some("Harness is running."),
+                                State::StoppedGraceful => Some("Harness stopped gracefully."),
+                                State::StoppedForced => Some("Harness stopped (forced)."),
+                                State::FailedStart => Some("Harness failed to start."),
+                                State::Crashed => Some("Harness crashed."),
+                                _ => None,
+                            };
+                            if let Some(body) = body {
+                                let mut last = toast_state.lock().expect("toast-state lock");
+                                if *last != Some(snapshot.state) {
+                                    *last = Some(snapshot.state);
+                                    let _ = emitter
+                                        .notification()
+                                        .builder()
+                                        .title("Pimp my DSH")
+                                        .body(body)
+                                        .show();
                                 }
                             }
                         }
@@ -168,7 +220,10 @@ mod desktop_app {
                 reveal_log_folder,
                 set_theme,
                 set_fixed_port,
-                set_restart_policy
+                set_restart_policy,
+                is_autostart_enabled,
+                set_autostart,
+                set_notifications_enabled
             ])
             .build(tauri::generate_context!())
             .expect("error while building the tauri application")
@@ -217,8 +272,19 @@ mod desktop_app {
         let open = MenuItem::with_id(app, "open", "Open Web UI", true, None::<&str>)?;
         let reveal = MenuItem::with_id(app, "reveal", "Reveal Logs", true, None::<&str>)?;
         let doctor = MenuItem::with_id(app, "doctor", "Run diagnostics", true, None::<&str>)?;
+        let autostart = CheckMenuItem::with_id(
+            app,
+            "autostart",
+            "Start with Windows",
+            true,
+            app.autolaunch().is_enabled().unwrap_or(false),
+            None::<&str>,
+        )?;
         let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&show, &start, &stop, &open, &doctor, &reveal, &quit])?;
+        let menu = Menu::with_items(
+            app,
+            &[&show, &start, &stop, &open, &doctor, &autostart, &reveal, &quit],
+        )?;
 
         let icon = app
             .default_window_icon()
@@ -229,7 +295,7 @@ mod desktop_app {
             .icon(icon)
             .menu(&menu)
             .show_menu_on_left_click(false)
-            .on_menu_event(|app, event| match event.id.as_ref() {
+            .on_menu_event(move |app, event| match event.id.as_ref() {
                 "show" => focus_main(app),
                 "start" => {
                     let _ = commands::start_harness();
@@ -246,6 +312,17 @@ mod desktop_app {
                 }
                 "doctor" => {
                     let _ = commands::run_doctor();
+                }
+                "autostart" => {
+                    let enabled = app.autolaunch().is_enabled().unwrap_or(false);
+                    let result = if enabled {
+                        app.autolaunch().disable()
+                    } else {
+                        app.autolaunch().enable()
+                    };
+                    if result.is_ok() {
+                        let _ = autostart.set_checked(!enabled);
+                    }
                 }
                 "quit" => app.exit(0),
                 _ => {}

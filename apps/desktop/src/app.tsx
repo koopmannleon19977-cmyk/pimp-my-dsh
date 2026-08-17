@@ -59,7 +59,7 @@ import type {
 } from "./types";
 
 type View = "overview" | "activity" | "settings";
-type PendingAction = "start" | "stop" | "doctor" | "open" | "reveal" | "theme" | "port" | "restart" | "copy" | null;
+type PendingAction = "start" | "stop" | "doctor" | "open" | "reveal" | "theme" | "port" | "restart" | "copy" | "autostart" | "notifications" | null;
 
 type StatePresentation = {
   readonly label: string;
@@ -214,6 +214,7 @@ export function App({ bridge = tauriSupervisorBridge }: { readonly bridge?: Supe
   const [frozenLogs, setFrozenLogs] = useState<readonly LogEvent[]>([]);
   const [quitConfirmation, setQuitConfirmation] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const stopButtonRef = useRef<HTMLSpanElement>(null);
   const onboardingButtonRef = useRef<HTMLSpanElement>(null);
   const overviewHeadingRef = useRef<HTMLSpanElement>(null);
@@ -249,6 +250,14 @@ export function App({ bridge = tauriSupervisorBridge }: { readonly bridge?: Supe
       unsubscribe?.();
     };
   }, [acceptSnapshot, bridge]);
+
+  useEffect(() => {
+    let active = true;
+    bridge.isAutostartEnabled()
+      .then((enabled) => { if (active) setAutostartEnabled(enabled); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [bridge]);
 
   useEffect(() => {
     if (!paused && snapshot !== null) setFrozenLogs(snapshot.logs);
@@ -425,6 +434,10 @@ export function App({ bridge = tauriSupervisorBridge }: { readonly bridge?: Supe
               </Card>
               <Card><CardHeader header={<Text weight="semibold">Recovery</Text>} description={<Text className="secondary-text">Choose whether a crash restarts the harness automatically.</Text>} />
                 <div className="settings-field"><Label htmlFor="restart-policy">On crash</Label><Dropdown id="restart-policy" value={snapshot.settings.restartPolicy} selectedOptions={[snapshot.settings.restartPolicy]} disabled={pending === "restart"} onOptionSelect={(_, data) => setRestartPolicy(data.optionValue as RestartPolicy)}><Option value="never">Never restart</Option><Option value="always">Always restart</Option></Dropdown><Text className="secondary-text">Graceful and forced stops never auto-restart.</Text></div>
+              </Card>
+              <Card><CardHeader header={<Text weight="semibold">System</Text>} description={<Text className="secondary-text">Start the supervisor with Windows and get notified on state changes.</Text>} />
+                <div className="settings-field"><Switch label="Start with Windows" checked={autostartEnabled ?? false} disabled={autostartEnabled === null || pending === "autostart"} onChange={(_, data) => { setAutostartEnabled(data.checked); void run("autostart", () => bridge.setAutostart(data.checked), data.checked ? "Autostart enabled." : "Autostart disabled.").finally(() => { void bridge.isAutostartEnabled().then(setAutostartEnabled).catch(() => undefined); }); }} /></div>
+                <div className="settings-field"><Switch label="State-change notifications" checked={snapshot.settings.notificationsEnabled} disabled={pending === "notifications"} onChange={(_, data) => void run("notifications", () => bridge.setNotificationsEnabled(data.checked), data.checked ? "State-change notifications enabled." : "State-change notifications disabled.")} /><Text className="secondary-text">State-change alerts appear as Windows notifications.</Text></div>
               </Card>
               <Card><CardHeader header={<Text weight="semibold">Network</Text>} description={<Text className="secondary-text">Leave the port automatic unless a local policy requires a fixed value.</Text>} />
                 <FixedPortField value={snapshot.settings.fixedPort} disabled={pending === "port" || snapshot.busy} onSave={(port) => void run("port", () => bridge.setFixedPort(port), port === null ? "Automatic port selection restored." : `Fixed port set to ${port}.`)} />

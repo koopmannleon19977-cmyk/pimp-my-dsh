@@ -1,7 +1,8 @@
-//! Command surface. Every command is parameterless except `set_theme` and
-//! `set_fixed_port`, whose accepted values are closed enums/ranges. No command
-//! accepts a URL, path, executable, argv, environment, PID, pipe name, run
-//! token, or lifecycle target.
+//! Command surface. Every command is parameterless except `set_theme`,
+//! `set_fixed_port`, `set_autostart`, and `set_notifications_enabled`, whose
+//! accepted values are closed enums/ranges/bools. No command accepts a URL,
+//! path, executable, argv, environment, PID, pipe name, run token, or
+//! lifecycle target.
 //!
 //! The functions here are the plain, testable surface (also used by the Tauri
 //! command handlers in `lib.rs`); they operate on a process-global supervisor
@@ -65,6 +66,10 @@ pub fn set_restart_policy(policy: RestartPolicy) -> Result<(), String> {
     supervisor().set_restart_policy(policy)
 }
 
+pub fn set_notifications_enabled(enabled: bool) -> Result<(), String> {
+    supervisor().set_notifications_enabled(enabled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +100,14 @@ mod tests {
         assert!(set_restart_policy(RestartPolicy::Always).is_ok());
         let snap = get_snapshot();
         assert_eq!(snap.settings.restart_policy, RestartPolicy::Always);
+    }
+
+    #[test]
+    fn set_notifications_enabled_stores_value() {
+        let _ = init_supervisor();
+        assert!(set_notifications_enabled(true).is_ok());
+        let snap = get_snapshot();
+        assert_eq!(snap.settings.notifications_enabled, true);
     }
 
     #[test]

@@ -17,6 +17,9 @@ const commands = {
   setTheme: "set_theme",
   setFixedPort: "set_fixed_port",
   setRestartPolicy: "set_restart_policy",
+  isAutostartEnabled: "is_autostart_enabled",
+  setAutostart: "set_autostart",
+  setNotificationsEnabled: "set_notifications_enabled",
 } as const;
 
 const snapshotEvent = "supervisor://snapshot";
@@ -31,6 +34,9 @@ export interface SupervisorBridge {
   setTheme(theme: ThemePreference): Promise<void>;
   setFixedPort(port: number | null): Promise<void>;
   setRestartPolicy(policy: RestartPolicy): Promise<void>;
+  isAutostartEnabled(): Promise<boolean>;
+  setAutostart(enabled: boolean): Promise<void>;
+  setNotificationsEnabled(enabled: boolean): Promise<void>;
   subscribe(onSnapshot: (snapshot: Snapshot) => void): Promise<() => void>;
 }
 
@@ -85,6 +91,15 @@ export const tauriSupervisorBridge: SupervisorBridge = {
       throw new TypeError("Restart policy must be never or always.");
     }
     await invoke<void>(commands.setRestartPolicy, { policy });
+  },
+  async isAutostartEnabled() {
+    return invoke<boolean>(commands.isAutostartEnabled);
+  },
+  async setAutostart(enabled) {
+    await invoke<void>(commands.setAutostart, { enabled });
+  },
+  async setNotificationsEnabled(enabled) {
+    await invoke<void>(commands.setNotificationsEnabled, { enabled });
   },
   async subscribe(onSnapshot) {
     return listen<Snapshot>(snapshotEvent, (event) => {

@@ -38,6 +38,7 @@ pub struct Settings {
     pub theme: Theme,
     pub fixed_port: Option<u16>,
     pub restart_policy: RestartPolicy,
+    pub notifications_enabled: bool,
 }
 
 impl Default for Settings {
@@ -46,6 +47,7 @@ impl Default for Settings {
             theme: Theme::System,
             fixed_port: None,
             restart_policy: RestartPolicy::Never,
+            notifications_enabled: false,
         }
     }
 }
@@ -219,10 +221,12 @@ mod tests {
             theme: Theme::Dark,
             fixed_port: Some(3080),
             restart_policy: RestartPolicy::Never,
+            notifications_enabled: false,
         };
         let v: serde_json::Value = serde_json::to_value(&s).unwrap();
         assert_eq!(v["theme"], "dark");
         assert_eq!(v["fixedPort"], 3080);
+        assert_eq!(v["notificationsEnabled"], false);
     }
 
     #[test]

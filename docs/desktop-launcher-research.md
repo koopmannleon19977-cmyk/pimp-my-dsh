@@ -279,7 +279,7 @@ Goal-prompt phrasing: *ship one persistent per-user Tauri 2 tray controller: Rus
 
 ### Phase 1 — operational polish
 
-Autostart opt-in (Start Menu Startup `.lnk` via `IShellLink` [S51]); structured `doctor --json`; crash/restart policy knob (never/always/ask); state-change notifications; per-profile state.
+Autostart opt-in (per-user HKCU Run key via the first-party `tauri-plugin-autostart` — supersedes the earlier `.lnk`/IShellLink plan [S51]: same least-privilege posture, no COM dependency, far smaller diff); structured `doctor --json`; crash/restart policy knob (never/always/ask); state-change notifications (Windows toasts via `tauri-plugin-notification`; toasts need an AppUserModelID, so unpackaged dev builds may not display them — verify with the installed NSIS build); per-profile state.
 
 ### Phase 2 — distribution & trust
 

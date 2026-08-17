@@ -66,6 +66,7 @@ export interface Settings {
   readonly theme: ThemePreference;
   readonly fixedPort: number | null;
   readonly restartPolicy: RestartPolicy;
+  readonly notificationsEnabled: boolean;
 }
 
 export interface CompatibilityView {

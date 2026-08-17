@@ -24,7 +24,7 @@ function createSnapshot(state: LifecycleState = "stopped", overrides: Partial<Sn
       { runId: "run-1", revision: 1, sequence: 1, timestamp: "2026-08-16T08:00:00.000Z", source: "lifecycle", level: "info", message: "Harness started" },
       { runId: "run-1", revision: 1, sequence: 2, timestamp: "2026-08-16T08:01:00.000Z", source: "stderr", level: "error", message: "Example failure" },
     ],
-    settings: { theme: "system", fixedPort: null, restartPolicy: "never" },
+    settings: { theme: "system", fixedPort: null, restartPolicy: "never", notificationsEnabled: false },
     compatibility: { controllerVersion: "0.1.0", distributionVersion: "0.1.0", nodeVersion: "24.19.0", pnpmVersion: "11.7.0", dshVersion: "0.1.0-rc.6", target: "x86_64-pc-windows-msvc", verified: true },
     loggingFault: null,
     ...overrides,
@@ -46,6 +46,10 @@ function createBridge(initial: Snapshot) {
     revealLogFolder: vi.fn().mockResolvedValue(undefined),
     setTheme: vi.fn().mockResolvedValue(undefined),
     setFixedPort: vi.fn().mockResolvedValue(undefined),
+    setRestartPolicy: vi.fn().mockResolvedValue(undefined),
+    isAutostartEnabled: vi.fn().mockResolvedValue(false),
+    setAutostart: vi.fn().mockResolvedValue(undefined),
+    setNotificationsEnabled: vi.fn().mockResolvedValue(undefined),
   };
   return { bridge, publish: (snapshot: Snapshot) => listener?.(snapshot) };
 }
@@ -196,6 +200,40 @@ describe("DSH Supervisor control surface", () => {
     expect(bridge.setTheme).toHaveBeenNthCalledWith(1, "dark");
     expect(bridge.setTheme).toHaveBeenNthCalledWith(2, "light");
     expect(bridge.setTheme).toHaveBeenNthCalledWith(3, "system");
+  });
+  it("renders the system toggles in settings", async () => {
+    const { user } = await renderLoaded();
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await screen.findByRole("switch", { name: "Start with Windows" });
+    screen.getByRole("switch", { name: "State-change notifications" });
+  });
+
+  it("toggles autostart through the settings bridge and announces it", async () => {
+    const { bridge, user } = await renderLoaded();
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    const toggle = await screen.findByRole("switch", { name: "Start with Windows" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await user.click(toggle);
+    expect(bridge.setAutostart).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(screen.getByRole("status", { name: "Supervisor updates" })).toHaveTextContent("Autostart enabled."));
+  });
+
+  it("toggles state-change notifications through the settings bridge", async () => {
+    const { bridge, user } = await renderLoaded();
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.click(await screen.findByRole("switch", { name: "State-change notifications" }));
+    expect(bridge.setNotificationsEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps the autostart switch disabled until the backend resolves it", async () => {
+    const never = new Promise<boolean>(() => undefined);
+    const control = createBridge(createSnapshot());
+    control.bridge.isAutostartEnabled = vi.fn(() => never);
+    const user = userEvent.setup();
+    render(<App bridge={control.bridge} />);
+    await screen.findByRole("heading", { name: "Overview" });
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(await screen.findByRole("switch", { name: "Start with Windows" })).toBeDisabled();
   });
   it("provides a keyboard-accessible onboarding review without persisting renderer state", async () => {
     const { user } = await renderLoaded();
