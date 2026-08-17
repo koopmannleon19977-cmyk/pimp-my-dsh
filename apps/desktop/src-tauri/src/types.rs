@@ -107,6 +107,27 @@ impl Default for CompatibilityView {
     }
 }
 
+/// Terminal outcome of a supervised run, recorded into recent history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunOutcome {
+    Graceful,
+    Forced,
+    Crashed,
+    FailedStart,
+}
+
+/// One completed run, newest-first in [`Snapshot::recent_runs`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunRecord {
+    pub run_id: String,
+    pub started_at: String,
+    pub ended_at: String,
+    pub outcome: RunOutcome,
+    pub reason: String,
+}
+
 /// The complete v1 supervisor snapshot. Rust emits this whole value (never a
 /// delta) on the `supervisor://snapshot` event after every revision change.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +144,7 @@ pub struct Snapshot {
     pub last_transition_at: String,
     pub busy: bool,
     pub health: Vec<HealthCheck>,
+    pub recent_runs: Vec<RunRecord>,
     pub doctor: Option<DoctorResult>,
     pub logs: Vec<LogEvent>,
     pub settings: Settings,
@@ -152,6 +174,7 @@ impl Snapshot {
             last_transition_at,
             busy: false,
             health: Vec::new(),
+            recent_runs: Vec::new(),
             doctor: None,
             logs: Vec::new(),
             settings: Settings::default(),

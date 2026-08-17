@@ -52,6 +52,7 @@ import type {
   LogEvent,
   LogLevel,
   LogSource,
+  RecentRun,
   Snapshot,
   ThemePreference,
 } from "./types";
@@ -361,6 +362,25 @@ export function App({ bridge = tauriSupervisorBridge }: { readonly bridge?: Supe
                   {presentation.action === "start" ? <Button appearance="primary" icon={<Play24Regular />} disabled={primaryDisabled} onClick={() => { focusLifecycleStatus(); void run("start", () => bridge.startHarness(), "Starting the web harness."); }}>{pending === "start" ? "Starting…" : "Start"}</Button> : null}
                   {presentation.action === "stop" ? <span ref={stopButtonRef}><Button appearance="primary" icon={<Stop24Regular />} disabled={primaryDisabled} onClick={() => setQuitConfirmation(true)}>{pending === "stop" ? "Stopping…" : "Stop"}</Button></span> : null}
                   <Button icon={<Open24Regular />} disabled={!canOpen} onClick={() => void run("open", () => bridge.openHarness(), "Opening the local Web UI.")}>Open Web UI</Button>
+                </CardFooter>
+              </Card>
+              <Card><CardHeader header={<Text weight="semibold">Recent runs</Text>} />
+                {snapshot.recentRuns.length > 0 ? (
+                  <ul className="health-list">
+                    {snapshot.recentRuns.map((run) => (
+                      <li key={run.runId}>
+                        <Text size={300} weight="semibold">{run.outcome}</Text>
+                        <Text className="secondary-text" block>{run.reason}</Text>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <Text className="secondary-text">No completed runs yet.</Text>
+                )}
+                <CardFooter>
+                  {presentation.action === "start" && snapshot.recentRuns.length > 0 ? (
+                    <Button appearance="secondary" icon={<Play24Regular />} disabled={primaryDisabled} onClick={() => { focusLifecycleStatus(); void run("start", () => bridge.startHarness(), "Resuming the web harness."); }}>{pending === "start" ? "Resuming…" : "Resume"}</Button>
+                  ) : null}
                 </CardFooter>
               </Card>
               <div className="two-column-grid">

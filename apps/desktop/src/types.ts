@@ -25,6 +25,16 @@ export interface HealthCheck {
   readonly message: string;
 }
 
+export type RunOutcome = "graceful" | "forced" | "crashed" | "failed-start";
+
+export interface RecentRun {
+  readonly runId: string;
+  readonly startedAt: string;
+  readonly endedAt: string;
+  readonly outcome: RunOutcome;
+  readonly reason: string;
+}
+
 export interface DoctorResult {
   readonly ok: boolean;
   readonly error: string | null;
@@ -78,6 +88,7 @@ export interface Snapshot {
   readonly lastTransitionAt: string;
   readonly busy: boolean;
   readonly health: readonly HealthCheck[];
+  readonly recentRuns: readonly RecentRun[];
   readonly doctor: DoctorResult | null;
   readonly logs: readonly LogEvent[];
   readonly settings: Settings;

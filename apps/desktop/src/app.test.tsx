@@ -18,6 +18,7 @@ function createSnapshot(state: LifecycleState = "stopped", overrides: Partial<Sn
     lastTransitionAt: "2026-08-16T08:00:00.000Z",
     busy: false,
     health: [{ id: "Pinned runtime", status: "ok", message: "Node and pnpm match the manifest." }],
+    recentRuns: [],
     doctor: null,
     logs: [
       { runId: "run-1", revision: 1, sequence: 1, timestamp: "2026-08-16T08:00:00.000Z", source: "lifecycle", level: "info", message: "Harness started" },

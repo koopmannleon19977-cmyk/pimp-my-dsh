@@ -51,6 +51,31 @@ fn log_folder() -> PathBuf {
     }
 }
 
+fn runs_file() -> PathBuf {
+    if let Some(appdata) = std::env::var_os("LOCALAPPDATA") {
+        PathBuf::from(appdata).join("pimp-my-dsh").join("runs.json")
+    } else {
+        std::env::temp_dir().join("pimp-my-dsh").join("runs.json")
+    }
+}
+
+/// Best-effort load: a missing or malformed history file starts empty.
+fn load_runs() -> Vec<crate::types::RunRecord> {
+    match std::fs::read_to_string(runs_file()) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_runs(runs: &[crate::types::RunRecord]) -> Result<(), String> {
+    let path = runs_file();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string(runs).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())
+}
+
 fn random_hex(bytes: usize) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut buf = vec![0u8; bytes];
@@ -87,11 +112,13 @@ struct Resources {
     run_id: Option<String>,
     endpoint: Option<String>,
     uptime_start: Option<Instant>,
+    started_at: Option<String>,
     busy: bool,
     /// Per-run cancellation token. Fresh on each real start; cleared only by
     /// the run that owns it (never a newer run's token).
     cancel: Option<Arc<AtomicBool>>,
     health: Vec<crate::types::HealthCheck>,
+    recent_runs: Vec<crate::types::RunRecord>,
     doctor: Option<DoctorResult>,
     settings: Settings,
     compatibility: CompatibilityView,
@@ -118,9 +145,11 @@ impl Supervisor {
                 run_id: None,
                 endpoint: None,
                 uptime_start: None,
+                started_at: None,
                 busy: false,
                 cancel: None,
                 health: Vec::new(),
+                recent_runs: load_runs(),
                 doctor: None,
                 settings: Settings::default(),
                 compatibility: CompatibilityView::default(),
@@ -157,6 +186,7 @@ impl Supervisor {
         snap.uptime_ms = res.uptime_start.map(|t| t.elapsed().as_millis() as u64);
         snap.busy = res.busy;
         snap.health = res.health.clone();
+        snap.recent_runs = res.recent_runs.clone();
         snap.doctor = res.doctor.clone();
         snap.logs = res.logs.snapshot();
         snap.settings = res.settings.clone();
@@ -447,6 +477,7 @@ impl Supervisor {
         let mut res = self.resources.lock().expect("resources lock");
         res.busy = false;
         res.uptime_start = None;
+        res.started_at = None;
         res.endpoint = None;
         res.health = Vec::new();
         res.run_id = None;
@@ -457,6 +488,27 @@ impl Supervisor {
                 res.cancel = None;
             }
         }
+    }
+
+    /// Record a completed run (newest-first, capped at 10). No-op when the run
+    /// never committed an identity/start time.
+    fn record_run_end(&self, outcome: crate::types::RunOutcome, reason: String) {
+        let ended_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let mut res = self.resources.lock().expect("resources lock");
+        let (run_id, started_at) = match (&res.run_id, &res.started_at) {
+            (Some(id), Some(ts)) => (id.clone(), ts.clone()),
+            _ => return,
+        };
+        res.recent_runs.insert(0, crate::types::RunRecord {
+            run_id,
+            started_at,
+            ended_at,
+            outcome,
+            reason,
+        });
+        res.recent_runs.truncate(10);
+        // Best-effort persist; the in-memory list is authoritative for the UI.
+        let _ = save_runs(&res.recent_runs);
     }
 
     /// Terminate the Job, wait for it to empty, then record the terminal state.
@@ -600,6 +652,8 @@ impl Supervisor {
             let mut res = self.resources.lock().expect("resources lock");
             res.run_id = Some(run_id.clone());
             res.uptime_start = Some(Instant::now());
+            res.started_at =
+                Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
             res.busy = true;
             res.endpoint = None;
             res.health = Vec::new();
@@ -673,6 +727,10 @@ impl Supervisor {
                         for d in drains.drain(..) {
                             let _ = d.join();
                         }
+                        self.record_run_end(
+                            crate::types::RunOutcome::Crashed,
+                            format!("child exited unexpectedly (code {code})"),
+                        );
                         self.finish_run(&cancel);
                         self.emit();
                         return;
@@ -798,6 +856,7 @@ impl Supervisor {
                         );
                     }
                     BridgeEvent::ProtocolFailure(msg) => {
+                        self.record_run_end(crate::types::RunOutcome::Crashed, msg.clone());
                         self.log(
                             LogSource::Lifecycle,
                             LogLevel::Error,
@@ -827,6 +886,10 @@ impl Supervisor {
                             for d in drains.drain(..) {
                                 let _ = d.join();
                             }
+                        self.record_run_end(
+                            crate::types::RunOutcome::Crashed,
+                            "bridge closed unexpectedly".to_string(),
+                        );
                             self.finish_run(&cancel);
                             self.emit();
                             return;
@@ -850,6 +913,10 @@ impl Supervisor {
                     let _ = d.join();
                 }
                 let _ = self.state.start_failed();
+                self.record_run_end(
+                    crate::types::RunOutcome::FailedStart,
+                    "handshake deadline exceeded".to_string(),
+                );
                 self.finish_run(&cancel);
                 self.emit();
                 return;
@@ -870,6 +937,10 @@ impl Supervisor {
                     for d in drains.drain(..) {
                         let _ = d.join();
                     }
+                    self.record_run_end(
+                        crate::types::RunOutcome::Forced,
+                        "grace deadline exceeded".to_string(),
+                    );
                     self.finish_run(&cancel);
                     self.emit();
                     return;
@@ -889,6 +960,10 @@ impl Supervisor {
                             for d in drains.drain(..) {
                                 let _ = d.join();
                             }
+                            self.record_run_end(
+                                crate::types::RunOutcome::Graceful,
+                                "child exited gracefully".to_string(),
+                            );
                             self.finish_run(&cancel);
                             self.emit();
                             return;
