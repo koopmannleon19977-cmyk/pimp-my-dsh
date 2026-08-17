@@ -88,11 +88,11 @@ no-fork decision.
 - [x] Embedded zero-capability harness webview as primary product surface (`open_harness` opens in-app).
 - [x] Auto-open the product window and demote the lobby to the tray on `Running`.
 - [x] Autostart opt-in (per-user HKCU Run key via `tauri-plugin-autostart`).
-- [ ] Structured `doctor --json` delegation from tray.
-- [ ] Crash/restart policy knob (never/always/ask).
+- [x] Structured `doctor --json` delegation from tray.
+- [x] Crash/restart policy knob (never/always; `ask` deferred — not shipped).
 - [x] State-change notifications (Windows toasts via `tauri-plugin-notification`).
 - [ ] Per-profile state in the tray controller.
-- [ ] `set_fixed_port` UI in the control surface.
+- [x] `set_fixed_port` UI in the control surface.
 - [ ] Health check polling from the bridge.
 
 ## Phase 2 — Distribution maturity (CLI)
