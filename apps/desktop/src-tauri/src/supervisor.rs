@@ -75,6 +75,7 @@ fn random_run_id() -> String {
 
 enum BridgeEvent {
     Ready { endpoint: String, port: u16 },
+    Health(Vec<crate::types::HealthCheck>),
     ChildStopping,
     ChildStopped,
     ChildError(String),
@@ -447,6 +448,7 @@ impl Supervisor {
         res.busy = false;
         res.uptime_start = None;
         res.endpoint = None;
+        res.health = Vec::new();
         res.run_id = None;
         // Clear only this run's token; never clobber a newer run's token if a
         // start raced the terminal transition.
@@ -600,6 +602,7 @@ impl Supervisor {
             res.uptime_start = Some(Instant::now());
             res.busy = true;
             res.endpoint = None;
+            res.health = Vec::new();
         }
 
         let (tx, rx) = mpsc::channel::<BridgeEvent>();
@@ -761,6 +764,13 @@ impl Supervisor {
                             Some(run_id.clone()),
                             format!("ready at {endpoint}"),
                         );
+                        self.emit();
+                    }
+                    BridgeEvent::Health(checks) => {
+                        {
+                            let mut res = self.resources.lock().expect("resources lock");
+                            res.health = checks;
+                        }
                         self.emit();
                     }
                     BridgeEvent::ChildStopping => {
@@ -946,7 +956,9 @@ fn spawn_bridge_reader(
                     let endpoint = construct_endpoint(&host, port);
                     let _ = tx.send(BridgeEvent::Ready { endpoint, port });
                 }
-                Ok(Frame::Health { .. }) => {}
+                Ok(Frame::Health { checks, .. }) => {
+                    let _ = tx.send(BridgeEvent::Health(checks));
+                }
                 Ok(Frame::Stopping { .. }) => {
                     let _ = tx.send(BridgeEvent::ChildStopping);
                 }

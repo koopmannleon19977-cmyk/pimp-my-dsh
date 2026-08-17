@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { registerSupervisorBridge } from '../src/supervisor-bridge'
+import { registerSupervisorBridge, buildHealthChecks } from '../src/supervisor-bridge'
 
 const ENV_PIPE = 'DSH_PIMP_SUPERVISOR_PIPE'
 const ENV_TOKEN = 'DSH_PIMP_SUPERVISOR_TOKEN'
@@ -51,5 +51,17 @@ describe('registerSupervisorBridge environment hygiene', () => {
     // Fail-closed: invalid token, no capture, no deletion, no effect.
     expect(process.env[ENV_TOKEN]).toBe('not-hex')
     expect(effect).not.toHaveBeenCalled()
+  })
+})
+
+describe('buildHealthChecks', () => {
+  it('reports no checks before the web server reports its port', () => {
+    expect(buildHealthChecks(null)).toEqual([])
+  })
+
+  it('reports the loopback web server with its port once ready', () => {
+    expect(buildHealthChecks(58581)).toEqual([
+      { id: 'web-server', status: 'ok', message: 'listening on 127.0.0.1:58581' },
+    ])
   })
 })

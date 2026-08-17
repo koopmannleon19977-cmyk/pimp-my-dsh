@@ -257,6 +257,11 @@ type-specific parsing and constructs the endpoint itself from host+port. A
 supplied URL must exactly equal the normalized result but never becomes
 authority.
 
+On `health` (sent every 30 s), the child sends `{checks:[{id,status,message}]}`;
+the controller stores them verbatim in `snapshot.health` for the lobby's health
+panel. Stop detection stays handle-based — these are self-reported liveness
+facets, never authority.
+
 ### Logs
 
 `LogEvent` struct: `{runId:string|null, revision:u64, sequence:u64,

@@ -70,13 +70,28 @@
     "health": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["protocolVersion", "type", "runId", "token", "sequence"],
+      "required": ["protocolVersion", "type", "runId", "token", "sequence", "checks"],
       "properties": {
         "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
         "type": { "const": "health" },
         "runId": { "$ref": "#/$defs/runId" },
         "token": { "$ref": "#/$defs/token" },
-        "sequence": { "$ref": "#/$defs/sequence" }
+        "sequence": { "$ref": "#/$defs/sequence" },
+        "checks": { "$ref": "#/$defs/checks" }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/healthCheck" }
+    },
+    "healthCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "message"],
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "enum": ["ok", "warning", "error"] },
+        "message": { "type": "string" }
       }
     },
     "stopping": {

@@ -12,6 +12,7 @@
 use thiserror::Error;
 
 use crate::compatibility::{DISTRIBUTION_VERSION, DSH_VERSION};
+use crate::types::HealthCheck;
 
 /// Maximum JSON body size (64 KiB), excluding the 4-byte length prefix.
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
@@ -48,6 +49,7 @@ pub enum Frame {
         run_id: String,
         token: String,
         sequence: u64,
+        checks: Vec<HealthCheck>,
     },
     Stopping {
         run_id: String,
@@ -164,7 +166,7 @@ pub fn decode(
             "distributionVersion",
             "dshVersion",
         ],
-        "health" => &["protocolVersion", "type", "runId", "token", "sequence"],
+        "health" => &["protocolVersion", "type", "runId", "token", "sequence", "checks"],
         "stopping" => &["protocolVersion", "type", "runId", "token", "sequence"],
         "stopped" => &["protocolVersion", "type", "runId", "token", "sequence"],
         "error" => &[
@@ -220,11 +222,18 @@ pub fn decode(
             token: token.to_string(),
             sequence,
         },
-        "health" => Frame::Health {
-            run_id: run_id.to_string(),
-            token: token.to_string(),
-            sequence,
-        },
+        "health" => {
+            let checks: Vec<HealthCheck> = obj
+                .get("checks")
+                .ok_or(ProtocolError::BadField)
+                .and_then(|v| serde_json::from_value(v.clone()).map_err(|_| ProtocolError::BadField))?;
+            Frame::Health {
+                run_id: run_id.to_string(),
+                token: token.to_string(),
+                sequence,
+                checks,
+            }
+        }
         "stopping" => Frame::Stopping {
             run_id: run_id.to_string(),
             token: token.to_string(),
@@ -341,6 +350,7 @@ pub fn construct_endpoint(host: &str, port: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::HealthStatus;
 
     const RUN: &str = "run-123";
     const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -359,6 +369,50 @@ mod tests {
         format!(
             "{{\"protocolVersion\":1,\"type\":\"ready\",\"runId\":\"{RUN}\",\"token\":\"{TOKEN}\",\"sequence\":{sequence},\"profile\":\"web\",\"host\":\"127.0.0.1\",\"port\":{port},\"url\":\"http://127.0.0.1:{port}\",\"distributionVersion\":\"0.1.0\",\"dshVersion\":\"0.1.0-rc.6\"}}"
         )
+    }
+
+    fn health(sequence: u64, checks: &str) -> String {
+        format!(
+            "{{\"protocolVersion\":1,\"type\":\"health\",\"runId\":\"{RUN}\",\"token\":\"{TOKEN}\",\"sequence\":{sequence},\"checks\":{checks}}}"
+        )
+    }
+
+    #[test]
+    fn health_carries_checks() {
+        let mut seq = 1;
+        decode(&frame(&hello(1)), RUN, TOKEN, &mut seq).unwrap();
+        let h = decode(
+            &frame(&health(
+                2,
+                r#"[{"id":"web-server","status":"ok","message":"listening on 127.0.0.1:4567"}]"#,
+            )),
+            RUN,
+            TOKEN,
+            &mut seq,
+        )
+        .unwrap();
+        match h {
+            Frame::Health { checks, .. } => {
+                assert_eq!(checks.len(), 1);
+                assert_eq!(checks[0].id, "web-server");
+                assert_eq!(checks[0].status, HealthStatus::Ok);
+                assert_eq!(checks[0].message, "listening on 127.0.0.1:4567");
+            }
+            _ => panic!("expected health"),
+        }
+    }
+
+    #[test]
+    fn health_missing_checks_rejected() {
+        let mut seq = 1;
+        decode(&frame(&hello(1)), RUN, TOKEN, &mut seq).unwrap();
+        let bad = format!(
+            "{{\"protocolVersion\":1,\"type\":\"health\",\"runId\":\"{RUN}\",\"token\":\"{TOKEN}\",\"sequence\":2}}"
+        );
+        assert_eq!(
+            decode(&frame(&bad), RUN, TOKEN, &mut seq),
+            Err(ProtocolError::BadField)
+        );
     }
 
     #[test]

@@ -88,6 +88,29 @@ function isShutdownFrame(value: unknown): value is { sequence: number } {
     && value.sequence >= 0
 }
 
+export interface HealthCheckPayload {
+  id: string
+  status: 'ok' | 'warning' | 'error'
+  message: string
+}
+
+/**
+ * Build the typed health checks the child reports to the supervisor. The only
+ * authoritative facet the bridge owns is the bound loopback web server; the
+ * supervisor already knows the READY host/port, so this is self-reported
+ * liveness of the same value the child itself verified.
+ */
+export function buildHealthChecks(readyPort: number | null): HealthCheckPayload[] {
+  if (readyPort === null) return []
+  return [
+    {
+      id: 'web-server',
+      status: 'ok',
+      message: `listening on ${LOOPBACK_HOST}:${String(readyPort)}`,
+    },
+  ]
+}
+
 class ChildBridge {
   private readonly environment: SupervisorEnvironment
   private sequence = SEQUENCE_BASE
@@ -96,6 +119,7 @@ class ChildBridge {
   private writePending = false
   private healthTimer: NodeJS.Timeout | null = null
   private readySent = false
+  private readyPort: number | null = null
   private shutdownStarted = false
   private tornDown = false
 
@@ -129,7 +153,7 @@ class ChildBridge {
   private onConnect(): void {
     this.sendFrame('hello')
     this.awaitWebServer()
-    this.healthTimer = setInterval(() => this.sendFrame('health'), HEALTH_INTERVAL_MS)
+    this.healthTimer = setInterval(() => this.sendHealth(), HEALTH_INTERVAL_MS)
   }
 
   private awaitWebServer(): void {
@@ -156,6 +180,7 @@ class ChildBridge {
   private sendReady(port: number): void {
     if (this.readySent) return
     this.readySent = true
+    this.readyPort = port
     this.sendFrame('ready', {
       profile: 'web',
       host: LOOPBACK_HOST,
@@ -164,6 +189,10 @@ class ChildBridge {
       distributionVersion: DISTRIBUTION_VERSION,
       dshVersion: DSH_VERSION,
     })
+  }
+
+  private sendHealth(): void {
+    this.sendFrame('health', { checks: buildHealthChecks(this.readyPort) })
   }
 
   private sendFrame(type: ChildFrameType, extra?: Record<string, unknown>): void {
