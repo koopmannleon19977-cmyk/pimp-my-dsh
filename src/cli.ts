@@ -18,6 +18,7 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 
 const VERSION = '0.1.0'
 const UPSTREAM_VERSION = '0.1.0-rc.6'
+const OUTPUT_SCHEMA_VERSION = 1
 const PLAYWRIGHT_MCP_VERSION = '0.0.79'
 const PROFILE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -144,7 +145,7 @@ function atomicWrite(path: string, content: string): void {
 
 function emit(value: Output, json: boolean): void {
   if (json) {
-    process.stdout.write(`${JSON.stringify(value)}\n`)
+    process.stdout.write(`${JSON.stringify({ schemaVersion: OUTPUT_SCHEMA_VERSION, ...value })}\n`)
     return
   }
   for (const [key, entry] of Object.entries(value)) process.stdout.write(`${key}: ${String(entry)}\n`)

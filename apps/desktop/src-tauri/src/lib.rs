@@ -210,8 +210,9 @@ mod desktop_app {
         let stop = MenuItem::with_id(app, "stop", "Stop", true, None::<&str>)?;
         let open = MenuItem::with_id(app, "open", "Open Web UI", true, None::<&str>)?;
         let reveal = MenuItem::with_id(app, "reveal", "Reveal Logs", true, None::<&str>)?;
+        let doctor = MenuItem::with_id(app, "doctor", "Run diagnostics", true, None::<&str>)?;
         let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&show, &start, &stop, &open, &reveal, &quit])?;
+        let menu = Menu::with_items(app, &[&show, &start, &stop, &open, &doctor, &reveal, &quit])?;
 
         let icon = app
             .default_window_icon()
@@ -236,6 +237,9 @@ mod desktop_app {
                 }
                 "reveal" => {
                     let _ = commands::reveal_log_folder();
+                }
+                "doctor" => {
+                    let _ = commands::run_doctor();
                 }
                 "quit" => app.exit(0),
                 _ => {}
