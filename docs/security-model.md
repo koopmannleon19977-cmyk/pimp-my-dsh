@@ -164,6 +164,25 @@ SSRF primitive:
 Result URLs are **data, not instructions**: the tool returns them as text and
 never fetches them. The SSRF-capable upstream HTTP fetch provider remains
 disabled regardless of this opt-in.
+## GitHub writes: fixed argv, approval-gated, push deferred
+
+`pimp_github_write` (PR / issue / comment) extends the read-only provider with
+exactly three write operations. Every invocation enters the approval pipeline
+— without an approval answerer the tool fails closed — and the human reviews
+the repository, branch, and content before anything is sent.
+
+- All operations run through the trusted `gh` executable with code-built
+  argument vectors: no shell, no `--force`, `--web`, `--fill`, or agent-supplied
+  flags beyond validated scalars (repository pattern, bounded title/body,
+  integer numbers).
+- The PR head is the current branch, read via the scrubbed Git environment;
+  the branch must already exist on the remote.
+- **`push` is deliberately not part of v1.** Git credential plumbing (credential
+  helpers, SSH config `ProxyCommand`, repo-controlled remote URLs) is an
+  authority surface of its own; pushing stays a human step until it has a
+  credential-safe design. A PR on an unpushed branch fails with a clean gh
+  error and the agent tells the user to push.
+- The provider errors are bounded and never echo credentials.
 
 ## LSP: explicit opt-in, unsandboxed
 

@@ -33,7 +33,7 @@ snapshot; the roadmap is in [roadmap.md](roadmap.md).
 | Worktree subagents | **Enabled, approval-gated** | `subagent_worktree`: one-shot child on unique retained branch; tracked working state copied; untracked files excluded; sparse indexes, non-UTF-8 paths, submodules, and unsafe links rejected; no automatic merge/delete |
 | Durable memory | **Enabled** | `pimp_memory`: canonical non-linked JSONL under `DSH_HOME`; bounded recall |
 | Community plugins | **Reviewed allowlist gate** | Policy, not code; no registry |
-| GitHub write automation | **Not present** | No such capability exists |
+| GitHub write automation | **Opt-in, approval-gated** | `pimp_github_write`: PR/issue/comment via fixed-argv `gh`; every call asks; push deferred (human step) |
 
 All shipped tools use DSH canonical structured values for runtime/UI consumers
 and separate bounded text renderers for model-facing results. The
@@ -56,7 +56,7 @@ GitHub reads report `{ operation, repository, data, truncated }`; memory reports
 This distribution does **not** claim:
 
 - Browser network isolation, logged-in profile control, or desktop computer use.
-- GitHub write automation (issue/PR creation, pushes, etc.).
+- GitHub pushes (PR/issue/comment writes are approval-gated; pushing branches stays a human step).
 - A community plugin registry or catalog.
 - Full sandbox isolation on Windows.
 - Network egress control.

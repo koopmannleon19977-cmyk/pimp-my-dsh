@@ -43,6 +43,10 @@ const MAX_SEARCH_ANSWER = 16_000
 const MAX_SEARCH_TITLE = 256
 const MAX_SEARCH_URL = 2_048
 const MAX_SEARCH_CONTENT = 8_000
+const MAX_WRITE_TITLE = 256
+const MAX_WRITE_BODY = 32_000
+const MAX_WRITE_URL = 2_048
+const BRANCH_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/
 const BROWSER_TOOL_PREFIX = 'mcp__browser__'
 const PASSIVE_BROWSER_TOOLS = new Set([
   'browser_console_messages',
@@ -80,6 +84,8 @@ async function toolApprovalGate(
     if (!PASSIVE_BROWSER_TOOLS.has(rawName)) {
       reason = 'This browser operation may mutate page or external state, disclose data, or expand authority; review its exact target and values.'
     }
+  } else if (exec.name === 'pimp_github_write') {
+    reason = 'This writes to GitHub (pull request, issue, or comment); review the exact repository, branch, and content.'
   }
   if (reason === undefined) return next()
   const downstream = await next()
@@ -115,6 +121,23 @@ interface GitHubReadResult {
 interface WebSearchResult {
   answer: string
   results: Array<{ title: string; url: string; content: string; score: number | null }>
+}
+
+interface GitHubWriteResult {
+  operation: 'pr' | 'issue' | 'comment'
+  url?: string
+  truncated: boolean
+}
+
+interface GitHubWriteArgs {
+  operation: 'pr' | 'issue' | 'comment'
+  repository: string
+  base?: string
+  head?: string
+  number?: number
+  kind?: 'issue' | 'pr'
+  title?: string
+  body?: string
 }
 
 
@@ -556,6 +579,91 @@ function readGitHub(args: {
   }
 }
 
+function currentBranch(cwd: string): string {
+  const child = spawnSync(gitExecutable(), ['--no-pager', 'branch', '--show-current'], {
+    cwd,
+    encoding: 'utf8',
+    env: gitEnvironment(),
+    shell: false,
+    windowsHide: true,
+    timeout: 15_000,
+  })
+  if (child.error) throw new Error(child.error.message.slice(0, MAX_GIT_OUTPUT))
+  if (child.status !== 0) throw gitFailure(child.stderr, `git exited ${String(child.status)}`)
+  const branch = child.stdout.trim()
+  if (branch.length === 0) throw new Error('current branch could not be determined')
+  return branch
+}
+
+function assertBranchName(branch: string): string {
+  if (!BRANCH_NAME_PATTERN.test(branch) || branch.includes('..') || branch.endsWith('/')) {
+    throw new Error('branch must start alphanumerically and use only alphanumeric, ".", "_", "/", or "-" without ".." or a trailing "/"')
+  }
+  return branch
+}
+
+function assertWriteArgs(args: GitHubWriteArgs): void {
+  githubRepository(args.repository)
+  if (args.title !== undefined && (args.title.length === 0 || args.title.length > MAX_WRITE_TITLE)) {
+    throw new Error(`title must be 1-${MAX_WRITE_TITLE} characters`)
+  }
+  if ((args.body ?? '').length > MAX_WRITE_BODY) {
+    throw new Error(`body must be at most ${MAX_WRITE_BODY} characters`)
+  }
+  if (args.head !== undefined) assertBranchName(args.head)
+  if (args.base !== undefined) assertBranchName(args.base)
+  if (args.number !== undefined && (!Number.isInteger(args.number) || args.number < 1 || args.number > 2_147_483_647)) {
+    throw new Error('number must be a positive integer up to 2147483647')
+  }
+  if (args.kind !== undefined && args.kind !== 'issue' && args.kind !== 'pr') {
+    throw new Error('kind must be "issue" or "pr"')
+  }
+}
+
+function writeGitHub(args: GitHubWriteArgs, cwd: string): GitHubWriteResult {
+  assertWriteArgs(args)
+  const repository = githubRepository(args.repository)
+  const argv: string[] = []
+  switch (args.operation) {
+    case 'pr': {
+      if (args.title === undefined) throw new Error('pr requires title')
+      const head = args.head ?? currentBranch(cwd)
+      argv.push('pr', 'create', '--repo', repository, '--head', head)
+      if (args.base !== undefined) argv.push('--base', args.base)
+      argv.push('--title', args.title, '--body', args.body ?? '')
+      break
+    }
+    case 'issue': {
+      if (args.title === undefined) throw new Error('issue requires title')
+      argv.push('issue', 'create', '--repo', repository, '--title', args.title, '--body', args.body ?? '')
+      break
+    }
+    case 'comment': {
+      if (args.number === undefined) throw new Error('comment requires number')
+      if (args.body === undefined) throw new Error('comment requires body')
+      argv.push(args.kind ?? 'issue', 'comment', String(args.number), '--repo', repository, '--body', args.body)
+      break
+    }
+  }
+  const child = spawnSync(ghExecutable(), argv, {
+    cwd,
+    encoding: 'utf8',
+    env: ghEnvironment(),
+    shell: false,
+    windowsHide: true,
+    timeout: 60_000,
+    maxBuffer: MAX_GITHUB_RESPONSE,
+  })
+  if (child.error) throw new Error(child.error.message.slice(0, MAX_GITHUB_OUTPUT))
+  if (child.status !== 0) throw gitFailure(child.stderr, `gh exited ${String(child.status)}`, MAX_GITHUB_OUTPUT)
+  const url = boundedText(child.stdout.trim(), MAX_WRITE_URL)
+  return {
+    operation: args.operation,
+    url: url.text.length > 0 ? url.text : undefined,
+    truncated: url.truncated,
+  }
+}
+
 const gitOutput = {
   schema: {
     type: 'object' as const,
@@ -595,6 +703,22 @@ const githubOutput = {
   render: (_args: unknown, value: GitHubReadResult) => [{
     type: 'text' as const,
     text: `${JSON.stringify(value.data, null, 2)}${value.truncated ? '\n[output truncated]' : ''}`,
+  }],
+}
+
+const githubWriteOutput = {
+  schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    properties: {
+      operation: { type: 'string' as const, required: true, enum: ['pr', 'issue', 'comment'] },
+      url: { type: 'string' as const },
+      truncated: { type: 'boolean' as const, required: true },
+    },
+  } as const,
+  render: (_args: unknown, value: GitHubWriteResult) => [{
+    type: 'text' as const,
+    text: JSON.stringify(value, null, 2),
   }],
 }
 
@@ -802,6 +926,35 @@ export function apply(ctx: Context): void {
         return { operation: 'remember', records: [remember(args.text)] }
       }
       return { operation: 'recall', records: recall(args.query ?? '') }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'pimp_github_write',
+    description: 'Create a GitHub pull request, issue, or comment through the authenticated GitHub CLI. Writes to GitHub and requires approval. Push is not available in v1 — the head branch of a pull request must already be pushed; the user pushes from their terminal.',
+    parameters: {
+      operation: {
+        type: 'string',
+        required: true,
+        enum: ['pr', 'issue', 'comment'],
+        description: 'Create a pull request, issue, or comment.',
+      },
+      repository: {
+        type: 'string',
+        required: true,
+        description: 'Exact GitHub owner/name repository.',
+      },
+      base: { type: 'string', description: 'Optional pull-request base branch.' },
+      head: { type: 'string', description: 'Optional pull-request head branch; defaults to the current branch.' },
+      number: { type: 'integer', description: 'Issue or pull-request number for comment.' },
+      kind: { type: 'string', enum: ['issue', 'pr'], description: 'Comment target kind; issue or pr. Default issue.' },
+      title: { type: 'string', description: 'Pull-request or issue title.' },
+      body: { type: 'string', description: 'Pull-request, issue, or comment body.' },
+    },
+    output: githubWriteOutput,
+    async execute(args, exec): Promise<GitHubWriteResult> {
+      const cwd = exec.agent?.session.header.cwd ?? process.cwd()
+      return writeGitHub(args, cwd)
     },
   }))
 

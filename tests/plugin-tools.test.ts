@@ -1,9 +1,15 @@
 import { spawnSync } from "node:child_process";
+import type * as NodeChildProcess from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apply } from "../src/plugin";
 import { makeTempDir } from "./helpers";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeChildProcess>();
+  return { ...actual, spawnSync: vi.fn(actual.spawnSync) };
+});
 
 interface Tool {
   name: string
@@ -25,6 +31,12 @@ interface MemoryResult {
 interface WebSearchResult {
   answer: string
   results: Array<{ title: string; url: string; content: string; score: number | null }>
+}
+
+interface GitHubWriteResult {
+  operation: "pr" | "issue" | "comment"
+  url?: string
+  truncated: boolean
 }
 
 function registerTools(): Tool[] {
@@ -53,8 +65,8 @@ describe("distribution-owned tools", () => {
 
   it("registers scoped Git, GitHub, and durable memory tools with structured results", () => {
     const tools = registerTools();
-    expect(tools.map((tool) => tool.name)).toEqual(["pimp_git_read", "pimp_github_read", "pimp_memory"]);
-    expect(tools.map((tool) => tool.output?.schema.type)).toEqual(["object", "object", "object"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["pimp_git_read", "pimp_github_read", "pimp_memory", "pimp_github_write"]);
+    expect(tools.map((tool) => tool.output?.schema.type)).toEqual(["object", "object", "object", "object"]);
   });
 
   it("applies fail-closed risk tiers to browser and worktree operations", async () => {
@@ -365,5 +377,137 @@ describe("pimp_web_search", () => {
     }
     expect(message).toBe("search provider error (HTTP 401)");
     expect(message).not.toContain("secret-key-123");
+  });
+});
+
+describe("pimp_github_write", () => {
+  const spawnSyncMock = vi.mocked(spawnSync);
+  const realSpawnSync = spawnSyncMock.getMockImplementation()!;
+
+  afterEach(() => {
+    spawnSyncMock.mockReset();
+    spawnSyncMock.mockImplementation(realSpawnSync);
+  });
+
+  it("asks for approval before any GitHub write while passive tools pass through", async () => {
+    let gate: ((exec: { name: string }, next: () => Promise<{ kind: "allow" } | { kind: "deny"; reason: string }>) => Promise<unknown>) | undefined;
+    apply({
+      systemPrompt: { section: vi.fn(), context: vi.fn() },
+      tools: { register: vi.fn() },
+      subagents: { registerProvider: vi.fn() },
+      on: (event: string, listener: typeof gate) => {
+        if (event === "tools/pre-execute") gate = listener;
+        return vi.fn();
+      },
+    } as never);
+
+    expect(gate).toBeDefined();
+    const next = vi.fn(async () => ({ kind: "allow" as const }));
+    await expect(gate!({ name: "pimp_github_write" }, next)).resolves.toMatchObject({
+      kind: "ask",
+      reason: expect.stringContaining("writes to GitHub"),
+    });
+    expect(next).toHaveBeenCalled();
+    await expect(gate!({ name: "pimp_git_read" }, next)).resolves.toEqual({ kind: "allow" });
+    await expect(gate!({ name: "pimp_github_read" }, next)).resolves.toEqual({ kind: "allow" });
+    await expect(gate!({ name: "pimp_memory" }, next)).resolves.toEqual({ kind: "allow" });
+  });
+
+  it("rejects invalid repository, oversized title, and unsafe branch names before spawning", async () => {
+    const write = registerTools().find((tool) => tool.name === "pimp_github_write");
+    expect(write).toBeDefined();
+
+    await expect(
+      write!.execute({ operation: "pr", repository: "../private", title: "T", body: "B" }, {}),
+    ).rejects.toThrow("exact owner/name");
+
+    await expect(
+      write!.execute({ operation: "issue", repository: "owner/name", title: "x".repeat(257), body: "B" }, {}),
+    ).rejects.toThrow("title must be");
+
+    for (const head of ["feat..x", "/lead", "-bad"]) {
+      await expect(
+        write!.execute({ operation: "pr", repository: "owner/name", title: "T", body: "B", head }, {}),
+      ).rejects.toThrow("branch must");
+    }
+
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("builds fixed gh argv for pr, issue, and comment without a shell", async () => {
+    const write = registerTools().find((tool) => tool.name === "pimp_github_write");
+    expect(write).toBeDefined();
+
+    spawnSyncMock.mockImplementation(((
+      _command: string,
+      args?: readonly string[],
+    ) => {
+      if (Array.isArray(args) && args.includes("--show-current")) {
+        return { status: 0, stdout: "feature-x\n", stderr: "", signal: null, error: undefined, pid: 1, output: ["feature-x\n", ""] };
+      }
+      return { status: 0, stdout: "https://github.com/owner/name/pull/1\n", stderr: "", signal: null, error: undefined, pid: 1, output: ["https://github.com/owner/name/pull/1\n", ""] };
+    }) as never);
+
+    const ghArgv = (first: string, second: string) =>
+      spawnSyncMock.mock.calls
+        .map((call) => call[1])
+        .find((args) => Array.isArray(args) && args[0] === first && args[1] === second);
+
+    const pr = await write!.execute(
+      { operation: "pr", repository: "owner/name", title: "T", body: "B" },
+      {},
+    ) as GitHubWriteResult;
+    expect(pr).toEqual({ operation: "pr", url: "https://github.com/owner/name/pull/1", truncated: false });
+    expect(ghArgv("pr", "create")).toEqual(
+      ["pr", "create", "--repo", "owner/name", "--head", "feature-x", "--title", "T", "--body", "B"],
+    );
+
+    spawnSyncMock.mockClear();
+
+    await write!.execute({ operation: "pr", repository: "owner/name", title: "T", body: "B", base: "main" }, {});
+    expect(ghArgv("pr", "create")).toEqual(
+      ["pr", "create", "--repo", "owner/name", "--head", "feature-x", "--base", "main", "--title", "T", "--body", "B"],
+    );
+
+    spawnSyncMock.mockClear();
+
+    await write!.execute({ operation: "issue", repository: "owner/name", title: "T", body: "B" }, {});
+    expect(ghArgv("issue", "create")).toEqual(
+      ["issue", "create", "--repo", "owner/name", "--title", "T", "--body", "B"],
+    );
+
+    spawnSyncMock.mockClear();
+
+    await write!.execute({ operation: "comment", repository: "owner/name", number: 42, body: "B" }, {});
+    expect(ghArgv("issue", "comment")).toEqual(
+      ["issue", "comment", "42", "--repo", "owner/name", "--body", "B"],
+    );
+
+    spawnSyncMock.mockClear();
+
+    await write!.execute({ operation: "comment", repository: "owner/name", number: 42, body: "B", kind: "pr" }, {});
+    expect(ghArgv("pr", "comment")).toEqual(
+      ["pr", "comment", "42", "--repo", "owner/name", "--body", "B"],
+    );
+  });
+
+  it("bounds a non-zero gh exit without leaking the full stderr blob", async () => {
+    const write = registerTools().find((tool) => tool.name === "pimp_github_write");
+    expect(write).toBeDefined();
+
+    const tail = "UNIQUE_CREDENTIAL_TAIL";
+    spawnSyncMock.mockImplementation(((
+      _command: string,
+      _args?: readonly string[],
+    ) => ({ status: 1, stdout: "", stderr: "x".repeat(100_000) + tail, signal: null, error: undefined, pid: 1, output: ["", "x".repeat(100_000) + tail] })) as never);
+
+    let message = "";
+    try {
+      await write!.execute({ operation: "issue", repository: "owner/name", title: "T", body: "B" }, {});
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).not.toContain(tail);
+    expect(message.length).toBeLessThanOrEqual(64_000);
   });
 });

@@ -24,9 +24,11 @@ provider where the upstream request seam has no per-child workspace override.
 
 - **Not a fork.** Upstream is consumed as a published npm artifact. See
   [ADR-0001](docs/adr/0001-no-fork.md).
-- **Not a logged-in browser or GitHub automation tool.** Web fetch and web
-  search stay disabled. Browser automation is isolated, headless, and opt-in;
-  there is no existing-profile control or GitHub write automation.
+- **Not a logged-in browser or full GitHub automation tool.** Web fetch stays
+  disabled; web search is the fixed-host opt-in provider. Browser automation is
+  isolated, headless, and opt-in; there is no existing-profile control. GitHub
+  writes are approval-gated (`pimp_github_write`: PR/issue/comment; push stays
+  a human step).
 - **Not a full sandbox.** On Windows, the sandbox restricts writes only and is
   explicitly partial. See [Security model](docs/security-model.md).
 

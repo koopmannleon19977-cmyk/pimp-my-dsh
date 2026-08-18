@@ -135,6 +135,9 @@ no-fork decision.
       pins.
 - [ ] Add tooling to verify allowlist pins against published artifacts.
 - [ ] Document the review process publicly.
+- [x] Approval-gated GitHub write tooling (`pimp_github_write`: PR, issue,
+      comment; every call asks; push deferred) — added beyond the original
+      phase scope.
 
 ## Phase 3 (optional, future) — macOS / Linux parity (desktop)
 
