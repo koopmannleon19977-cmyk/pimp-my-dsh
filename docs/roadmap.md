@@ -72,8 +72,10 @@ no-fork decision.
 - [x] Add a safe public-network web provider and gate it behind explicit
       opt-in, keeping the SSRF primitive disabled (`pimp_web_search`:
       fixed-host Tavily API, redirects rejected, bounded I/O).
-- [ ] Add browser network confinement before enabling browser automation by
-      default.
+- [x] Add browser network confinement (`scripts/confine-browser.ps1`: Firewall
+      block rules for loopback/RFC1918/link-local/multicast on the pinned
+      Playwright Chromium). Per-machine elevated step; enabling automation by
+      default stays gated on that step per machine.
 - [ ] Add read-side confinement on Windows (pair the ACL write boundary with a
       read-side policy or AppContainer capability token).
 - [ ] Add a community-plugin review checklist artifact that the reviewed

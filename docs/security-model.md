@@ -138,8 +138,13 @@ server through the first-party DSH MCP client with these controls:
   tool require one-call approval. Without an approval answerer they fail closed.
 - Arbitrary JavaScript in the unsandboxed browser server is denied.
 
-These controls do **not** confine browser network egress and the Playwright
-origin filters are not a security boundary across redirects. Do not enable
+These controls do not confine browser network egress by themselves, and the
+Playwright origin filters are not a security boundary across redirects. The
+distribution ships optional **egress confinement** via
+`scripts/confine-browser.ps1 -Apply` (elevated): Windows Firewall outbound
+block rules pinned on the exact Playwright Chromium executable for loopback,
+RFC1918 private, link-local, and multicast destinations — public internet
+stays reachable. Until that one-time per-machine step runs, do not enable
 browser automation where Chrome can reach sensitive internal services. The
 distribution does not support logged-in profile control or desktop computer use.
 

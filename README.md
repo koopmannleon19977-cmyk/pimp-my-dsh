@@ -213,8 +213,12 @@ without approval. Navigation, clicks, typing, uploads, script evaluation,
 storage access, unknown future browser tools, and other stateful operations
 enter the approval pipeline; profiles without an interactive answerer fail
 closed. Arbitrary code execution in the unsandboxed browser server is denied.
-Browser network egress is not confined, so the capability remains disabled
-unless `PIMP_DSH_ENABLE_BROWSER=1`.
+
+Browser network egress is optionally confined: `scripts/confine-browser.ps1 -Apply`
+(elevated, one-time per machine) pins Windows Firewall block rules on the
+Playwright Chromium for loopback/private/link-local/multicast destinations.
+Until it runs on a machine, the capability remains disabled unless
+`PIMP_DSH_ENABLE_BROWSER=1`.
 
 `subagent_worktree` creates a unique branch and worktree under
 `DSH_HOME/pimp-my-dsh/worktrees`, initializes its index from `HEAD`, and copies

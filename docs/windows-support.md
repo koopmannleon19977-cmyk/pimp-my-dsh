@@ -128,6 +128,23 @@ The desktop ships an NSIS per-user installer (`*-setup.exe`):
 - **Production builds** require dual Authenticode signing (Phase 2):
   `signtool` with an OV or EV certificate for the `.exe` and `.msi`.
 
+
+### Browser egress confinement (optional, per machine)
+
+`scripts/confine-browser.ps1` pins Windows Firewall outbound block rules on the
+exact Playwright Chromium executable (loopback, RFC1918, link-local,
+multicast), so agent-driven browsing cannot reach internal services while
+public internet stays available. Apply once per machine, elevated:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/confine-browser.ps1 -Apply
+```
+
+Check status unelevated (`-Verify`, exit 0 = confined) and remove the rules
+with `-Cleanup` (elevated). Re-run `-Apply` after any Playwright pin upgrade —
+the new `chromium-XXXX` directory gets a fresh rule set. While confined,
+browsing to `127.0.0.1` (including the harness web UI) is intentionally
+impossible.
 ### Tauri tray and single instance
 
 - **Tray:** first-party `tray-icon` Cargo feature. Native notification-area
