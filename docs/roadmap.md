@@ -69,8 +69,9 @@ upstream without forking it, and ship a complete desktop supervisor vertical sli
 **Goal:** close the largest gaps in the current CLI posture without changing the
 no-fork decision.
 
-- [ ] Add a safe public-network web provider (if one exists upstream) and gate
-      it behind explicit opt-in, keeping the SSRF primitive disabled.
+- [x] Add a safe public-network web provider and gate it behind explicit
+      opt-in, keeping the SSRF primitive disabled (`pimp_web_search`:
+      fixed-host Tavily API, redirects rejected, bounded I/O).
 - [ ] Add browser network confinement before enabling browser automation by
       default.
 - [ ] Add read-side confinement on Windows (pair the ACL write boundary with a

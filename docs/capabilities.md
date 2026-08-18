@@ -25,7 +25,7 @@ snapshot; the roadmap is in [roadmap.md](roadmap.md).
 | --- | --- | --- |
 | Telemetry | **Disabled unconditionally** | `DSH_TELEMETRY_MODE` ignored |
 | Web fetch | **Disabled** | SSRF primitive; no safe provider |
-| Web search | **Disabled** | No safe provider |
+| Web search | **Opt-in** | `pimp_web_search`: fixed-host Tavily API (`PIMP_DSH_ENABLE_WEB_SEARCH` + `PIMP_DSH_WEB_SEARCH_KEY`); redirects rejected, bounded query/response, key never echoed |
 | Browser automation | **Opt-in, risk-gated** | Bounded inspection allowlist; navigation, interactions, storage, and unknown tools ask; unsandboxed server code denied |
 | LSP navigation | **Opt-in, unsandboxed** | `PIMP_DSH_ENABLE_LSP` |
 | Scoped Git reads | **Enabled** | `pimp_git_read`: fixed status/diff/log in the calling agent workspace; helper execution, lazy fetch, secrets, and arbitrary args disabled |

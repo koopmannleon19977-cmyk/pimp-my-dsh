@@ -141,8 +141,29 @@ server through the first-party DSH MCP client with these controls:
 These controls do **not** confine browser network egress and the Playwright
 origin filters are not a security boundary across redirects. Do not enable
 browser automation where Chrome can reach sensitive internal services. The
-distribution does not support logged-in profile control or desktop computer
-use.
+distribution does not support logged-in profile control or desktop computer use.
+
+## Web search: fixed-host provider, opt-in
+
+`pimp_web_search` (opt-in via `PIMP_DSH_ENABLE_WEB_SEARCH=1` plus
+`PIMP_DSH_WEB_SEARCH_KEY`) queries the **Tavily API at one fixed HTTPS
+endpoint** and returns its results as untrusted text. Why this is not the
+SSRF primitive:
+
+- The client can only ever reach `api.tavily.com` on port 443 — the provider's
+  servers fetch pages, not the local process. Loopback/link-local/internal
+  destinations are unreachable through this tool.
+- Redirects are rejected (`redirect: "error"`): a 3xx cannot smuggle a
+  follow-up request to an internal address.
+- The API key travels in the POST body (never the URL) and is never included
+  in tool output or error messages; the existing log redaction covers the
+  `DSH_PIMP_*` name family.
+- Query length (512 chars), result count (1-10), per-field text, and the
+  streamed response body (1 MiB) are all bounded.
+
+Result URLs are **data, not instructions**: the tool returns them as text and
+never fetches them. The SSRF-capable upstream HTTP fetch provider remains
+disabled regardless of this opt-in.
 
 ## LSP: explicit opt-in, unsandboxed
 

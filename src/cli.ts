@@ -214,6 +214,8 @@ function harnessEnvironment(): Environment {
     ['PIMP_DSH_BASE_URL', 'DSH_PIMP_BASE_URL'],
     ['PIMP_DSH_MODEL', 'DSH_PIMP_MODEL'],
     ['PIMP_DSH_ENABLE_LSP', 'DSH_PIMP_ENABLE_LSP'],
+    ['PIMP_DSH_ENABLE_WEB_SEARCH', 'DSH_PIMP_ENABLE_WEB_SEARCH'],
+    ['PIMP_DSH_WEB_SEARCH_KEY', 'DSH_PIMP_WEB_SEARCH_KEY'],
     ['PIMP_DSH_ENABLE_BROWSER', 'DSH_PIMP_ENABLE_BROWSER'],
   ] as const
   for (const [publicName, protectedName] of promotions) {

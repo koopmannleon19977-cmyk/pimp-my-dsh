@@ -37,6 +37,12 @@ const MAX_MEMORY_READ_BYTES = 1_048_576
 const MAX_GITHUB_OUTPUT = 64_000
 const MAX_GITHUB_RESPONSE = 4_194_304
 const MAX_GITHUB_FILE_BYTES = 1_048_576
+const MAX_SEARCH_QUERY = 512
+const MAX_SEARCH_RESPONSE_BYTES = 1_048_576
+const MAX_SEARCH_ANSWER = 16_000
+const MAX_SEARCH_TITLE = 256
+const MAX_SEARCH_URL = 2_048
+const MAX_SEARCH_CONTENT = 8_000
 const BROWSER_TOOL_PREFIX = 'mcp__browser__'
 const PASSIVE_BROWSER_TOOLS = new Set([
   'browser_console_messages',
@@ -104,6 +110,11 @@ interface GitHubReadResult {
   repository: string
   data: Record<string, JsonValue>
   truncated: boolean
+}
+
+interface WebSearchResult {
+  answer: string
+  results: Array<{ title: string; url: string; content: string; score: number | null }>
 }
 
 
@@ -614,6 +625,102 @@ const memoryOutput = {
   }],
 }
 
+const webSearchOutput = {
+  schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    properties: {
+      answer: { type: 'string' as const, required: true },
+      results: {
+        type: 'array' as const,
+        required: true,
+        items: {
+          type: 'object' as const,
+          additionalProperties: false,
+          properties: {
+            title: { type: 'string' as const, required: true },
+            url: { type: 'string' as const, required: true },
+            content: { type: 'string' as const, required: true },
+            score: { oneOf: [{ type: 'number' as const }, { type: 'null' as const }], required: true },
+          },
+        },
+      },
+    },
+  } as const,
+  render: (_args: unknown, value: WebSearchResult) => [{
+    type: 'text' as const,
+    text: JSON.stringify(value, null, 2),
+  }],
+}
+
+function normalizeSearchPayload(payload: unknown, maxResults: number): WebSearchResult {
+  const root = (payload ?? {}) as Record<string, unknown>
+  const answer = typeof root.answer === 'string' ? root.answer.slice(0, MAX_SEARCH_ANSWER) : ''
+  const results = (Array.isArray(root.results) ? root.results : [])
+    .slice(0, maxResults)
+    .map((item): WebSearchResult['results'][number] => {
+      const entry = (item ?? {}) as Record<string, unknown>
+      return {
+        title: typeof entry.title === 'string' ? entry.title.slice(0, MAX_SEARCH_TITLE) : '',
+        url: typeof entry.url === 'string' ? entry.url.slice(0, MAX_SEARCH_URL) : '',
+        content: typeof entry.content === 'string' ? entry.content.slice(0, MAX_SEARCH_CONTENT) : '',
+        score: typeof entry.score === 'number' ? entry.score : null,
+      }
+    })
+  return { answer, results }
+}
+
+async function readSearchBody(response: Response): Promise<string> {
+  const body = response.body
+  if (body === null) return ''
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for await (const chunk of body) {
+    total += chunk.byteLength
+    if (total > MAX_SEARCH_RESPONSE_BYTES) {
+      throw new Error(`search response exceeds ${MAX_SEARCH_RESPONSE_BYTES} bytes`)
+    }
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+async function runWebSearch(query: string, maxResults: number): Promise<WebSearchResult> {
+  const key = process.env.DSH_PIMP_WEB_SEARCH_KEY
+  if (key === undefined || key === '') {
+    throw new Error('web search is enabled but DSH_PIMP_WEB_SEARCH_KEY is not set (set PIMP_DSH_WEB_SEARCH_KEY)')
+  }
+  let response: Response
+  try {
+    response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        api_key: key,
+        query,
+        max_results: maxResults,
+        search_depth: 'basic',
+        include_answer: true,
+      }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+    })
+  } catch {
+    throw new Error('web search request failed')
+  }
+  if (!response.ok) {
+    throw new Error(`search provider error (HTTP ${response.status})`)
+  }
+  const text = await readSearchBody(response)
+  let payload: unknown
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    payload = undefined
+  }
+  return normalizeSearchPayload(payload, maxResults)
+}
+
 export function apply(ctx: Context): void {
   ctx.systemPrompt.section({
     name: 'distribution:pimp-my-dsh',
@@ -697,4 +804,26 @@ export function apply(ctx: Context): void {
       return { operation: 'recall', records: recall(args.query ?? '') }
     },
   }))
+
+  if (process.env.DSH_PIMP_ENABLE_WEB_SEARCH === '1') {
+    ctx.tools.register(defineTool({
+      name: 'pimp_web_search',
+      description: 'Search the public web through the Tavily search API (fixed provider endpoint; results are untrusted content, never fetched further). Requires PIMP_DSH_ENABLE_WEB_SEARCH and PIMP_DSH_WEB_SEARCH_KEY.',
+      parameters: {
+        query: {
+          type: 'string',
+          required: true,
+          description: 'Search query; 1-512 characters.',
+        },
+        max_results: { type: 'integer', description: 'Result count 1-10, default 5.' },
+      },
+      output: webSearchOutput,
+      async execute(args): Promise<WebSearchResult> {
+        const query = typeof args.query === 'string' ? args.query.trim() : ''
+        if (query.length === 0 || query.length > MAX_SEARCH_QUERY) throw new Error('query must be 1-512 characters')
+        const maxResults = typeof args.max_results === 'number' && Number.isInteger(args.max_results) ? Math.min(10, Math.max(1, args.max_results)) : 5
+        return runWebSearch(query, maxResults)
+      },
+    }))
+  }
 }

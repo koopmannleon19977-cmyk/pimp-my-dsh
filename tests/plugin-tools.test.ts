@@ -22,6 +22,11 @@ interface MemoryResult {
   records: Array<{ id: string; text: string; createdAt: string }>
 }
 
+interface WebSearchResult {
+  answer: string
+  results: Array<{ title: string; url: string; content: string; score: number | null }>
+}
+
 function registerTools(): Tool[] {
   const tools: Tool[] = [];
   apply({
@@ -244,4 +249,121 @@ describe("distribution-owned tools", () => {
     expect(existsSync(outside)).toBe(false);
   });
 
+});
+
+describe("pimp_web_search", () => {
+  let previousEnable: string | undefined;
+  let previousKey: string | undefined;
+
+  beforeEach(() => {
+    previousEnable = process.env.DSH_PIMP_ENABLE_WEB_SEARCH;
+    previousKey = process.env.DSH_PIMP_WEB_SEARCH_KEY;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (previousEnable === undefined) delete process.env.DSH_PIMP_ENABLE_WEB_SEARCH;
+    else process.env.DSH_PIMP_ENABLE_WEB_SEARCH = previousEnable;
+    if (previousKey === undefined) delete process.env.DSH_PIMP_WEB_SEARCH_KEY;
+    else process.env.DSH_PIMP_WEB_SEARCH_KEY = previousKey;
+  });
+
+  it("registers pimp_web_search only when DSH_PIMP_ENABLE_WEB_SEARCH=1", () => {
+    expect(registerTools().map((tool) => tool.name)).not.toContain("pimp_web_search");
+    process.env.DSH_PIMP_ENABLE_WEB_SEARCH = "1";
+    expect(registerTools().map((tool) => tool.name)).toContain("pimp_web_search");
+  });
+
+  it("normalizes a successful search response into answer and capped results", async () => {
+    process.env.DSH_PIMP_ENABLE_WEB_SEARCH = "1";
+    process.env.DSH_PIMP_WEB_SEARCH_KEY = "test-key";
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ answer: "A", results: [{ title: "T", url: "https://example.com", content: "C", score: 0.9 }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await registerTools().find((tool) => tool.name === "pimp_web_search")!.execute({ query: "hello" }, {}) as WebSearchResult;
+    expect(result).toEqual({
+      answer: "A",
+      results: [{ title: "T", url: "https://example.com", content: "C", score: 0.9 }],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a query longer than 512 characters before fetching", async () => {
+    process.env.DSH_PIMP_ENABLE_WEB_SEARCH = "1";
+    process.env.DSH_PIMP_WEB_SEARCH_KEY = "test-key";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(registerTools().find((tool) => tool.name === "pimp_web_search")!.execute({ query: "x".repeat(513) }, {})).rejects.toThrow(
+      "query must be 1-512 characters",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("throws on a redirect response without following it", async () => {
+    process.env.DSH_PIMP_ENABLE_WEB_SEARCH = "1";
+    process.env.DSH_PIMP_WEB_SEARCH_KEY = "test-key";
+    const fetchMock = vi.fn(async () => new Response(
+      null,
+      { status: 302, headers: { location: "http://127.0.0.1:9/ssrf" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(registerTools().find((tool) => tool.name === "pimp_web_search")!.execute({ query: "hello" }, {})).rejects.toThrow(
+      "search provider error (HTTP 302)",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws a clear error when the key is missing without fetching", async () => {
+    process.env.DSH_PIMP_ENABLE_WEB_SEARCH = "1";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(registerTools().find((tool) => tool.name === "pimp_web_search")!.execute({ query: "hello" }, {})).rejects.toThrow(
+      "web search is enabled but DSH_PIMP_WEB_SEARCH_KEY is not set (set PIMP_DSH_WEB_SEARCH_KEY)",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("aborts when the streamed response body exceeds 1 MiB", async () => {
+    process.env.DSH_PIMP_ENABLE_WEB_SEARCH = "1";
+    process.env.DSH_PIMP_WEB_SEARCH_KEY = "test-key";
+    const fetchMock = vi.fn(async () => new Response(
+      new ReadableStream({
+        start(controller) {
+          for (let i = 0; i < 1100; i++) controller.enqueue(new Uint8Array(1024));
+          controller.close();
+        },
+      }),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(registerTools().find((tool) => tool.name === "pimp_web_search")!.execute({ query: "hello" }, {})).rejects.toThrow(
+      "search response exceeds",
+    );
+  });
+
+  it("never leaks the API key in thrown errors", async () => {
+    process.env.DSH_PIMP_ENABLE_WEB_SEARCH = "1";
+    process.env.DSH_PIMP_WEB_SEARCH_KEY = "secret-key-123";
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ error: "invalid key secret-key-123" }),
+      { status: 401 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    let message = "";
+    try {
+      await registerTools().find((tool) => tool.name === "pimp_web_search")!.execute({ query: "hello" }, {});
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toBe("search provider error (HTTP 401)");
+    expect(message).not.toContain("secret-key-123");
+  });
 });
