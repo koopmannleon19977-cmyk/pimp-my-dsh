@@ -16,18 +16,35 @@ use crate::platform::{
 };
 use crate::protocol::{Frame, construct_endpoint, decode, encode_shutdown};
 use crate::state::State;
-use crate::types::{CompatibilityView, DoctorResult, Settings, Snapshot, Theme};
+use crate::types::{CompatibilityView, DoctorResult, HealthCheck, HealthStatus, Settings, Snapshot, Theme};
 
 /// Grace period beyond the upstream 5 s disposal bound.
 const GRACE_TIMEOUT: Duration = Duration::from_secs(6);
 /// Poll cadence for the lifecycle loop.
 const TICK: Duration = Duration::from_millis(40);
+/// The child heartbeats every 30 s; two-and-a-half missed intervals declare health stale.
+const HEALTH_STALE_AFTER: Duration = Duration::from_secs(75);
 /// Deadline for the child to connect and complete the Hello→Ready handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Deadline for the CLI doctor to produce its JSON result.
 const DOCTOR_TIMEOUT: Duration = Duration::from_secs(15);
 /// Upper bound on captured doctor stdout/stderr before truncation.
 const DOCTOR_DRAIN_CAP: usize = 64 * 1024;
+
+/// Stale when the run is old enough to expect a heartbeat and none arrived within
+/// HEALTH_STALE_AFTER (no frame at all also counts).
+fn health_is_stale(health_at: Option<Instant>, run_start: Option<Instant>, now: Instant) -> bool {
+    let Some(start) = run_start else {
+        return false;
+    };
+    if now.duration_since(start) < HEALTH_STALE_AFTER {
+        return false;
+    }
+    match health_at {
+        None => true,
+        Some(t) => now.duration_since(t) > HEALTH_STALE_AFTER,
+    }
+}
 
 fn active_provider(resource_dir: Option<PathBuf>) -> Box<dyn Provider> {
     #[cfg(debug_assertions)]
@@ -160,6 +177,8 @@ struct Resources {
     /// the run that owns it (never a newer run's token).
     cancel: Option<Arc<AtomicBool>>,
     health: Vec<crate::types::HealthCheck>,
+    health_at: Option<Instant>,
+    health_stale: bool,
     recent_runs: Vec<crate::types::RunRecord>,
     doctor: Option<DoctorResult>,
     settings: Settings,
@@ -191,6 +210,8 @@ impl Supervisor {
                 busy: false,
                 cancel: None,
                 health: Vec::new(),
+                health_at: None,
+                health_stale: false,
                 recent_runs: load_runs(),
                 doctor: None,
                 settings: load_settings(),
@@ -548,6 +569,8 @@ impl Supervisor {
         res.started_at = None;
         res.endpoint = None;
         res.health = Vec::new();
+        res.health_at = None;
+        res.health_stale = false;
         res.run_id = None;
         // Clear only this run's token; never clobber a newer run's token if a
         // start raced the terminal transition.
@@ -922,6 +945,8 @@ impl Supervisor {
                         {
                             let mut res = self.resources.lock().expect("resources lock");
                             res.health = checks;
+                            res.health_at = Some(Instant::now());
+                            res.health_stale = false;
                         }
                         self.emit();
                     }
@@ -991,6 +1016,28 @@ impl Supervisor {
                             return;
                         }
                     }
+                }
+            }
+
+            // Health watchdog: once per loop tick, declare the heartbeat stale and
+            // append a supervisor-owned check; the next child frame replaces it.
+            {
+                let mut res = self.resources.lock().expect("resources lock");
+                let stale = health_is_stale(res.health_at, res.uptime_start, Instant::now());
+                if stale != res.health_stale {
+                    res.health_stale = stale;
+                    if stale {
+                        res.health.push(HealthCheck {
+                            id: "supervisor-heartbeat".to_string(),
+                            status: HealthStatus::Error,
+                            message: format!(
+                                "no health frame for over {} s; the child may be hung",
+                                HEALTH_STALE_AFTER.as_secs()
+                            ),
+                        });
+                    }
+                    drop(res);
+                    self.emit();
                 }
             }
 
@@ -1285,5 +1332,37 @@ mod tests {
             state_file().file_name().unwrap().to_str().unwrap(),
             format!("{SUPERVISED_PROFILE}.json").as_str()
         );
+    }
+
+    #[test]
+    fn health_watchdog_stale_requires_run_age() {
+        let now = Instant::now();
+        let start = now;
+        assert!(!health_is_stale(None, Some(start), now + Duration::from_secs(74)));
+        assert!(health_is_stale(None, Some(start), now + Duration::from_secs(76)));
+    }
+
+    #[test]
+    fn health_watchdog_fresh_frame_clears_staleness() {
+        let now = Instant::now();
+        let start = now;
+        // 80 s after the last frame → stale.
+        assert!(health_is_stale(
+            Some(now + Duration::from_secs(60)),
+            Some(start),
+            now + Duration::from_secs(140)
+        ));
+        // 10 s after a fresh frame → not stale.
+        assert!(!health_is_stale(
+            Some(now + Duration::from_secs(130)),
+            Some(start),
+            now + Duration::from_secs(140)
+        ));
+    }
+
+    #[test]
+    fn health_watchdog_inert_before_run_start() {
+        let now = Instant::now();
+        assert!(!health_is_stale(None, None, now));
     }
 }

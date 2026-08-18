@@ -93,7 +93,7 @@ no-fork decision.
 - [x] State-change notifications (Windows toasts via `tauri-plugin-notification`).
 - [x] Per-profile state in the tray controller (settings persist per supervised profile; run history stays global).
 - [x] `set_fixed_port` UI in the control surface.
-- [ ] Health check polling from the bridge.
+- [x] Health check polling from the bridge (75 s heartbeat watchdog; stale frames surface as a supervisor-owned error check).
 
 ## Phase 2 — Distribution maturity (CLI)
 

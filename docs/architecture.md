@@ -259,8 +259,11 @@ authority.
 
 On `health` (sent every 30 s), the child sends `{checks:[{id,status,message}]}`;
 the controller stores them verbatim in `snapshot.health` for the lobby's health
-panel. Stop detection stays handle-based — these are self-reported liveness
-facets, never authority.
+panel and records the receipt time. A watchdog in the run loop declares the
+heartbeat stale when no frame arrives within 75 s (2.5 intervals) and appends
+a supervisor-owned `supervisor-heartbeat` error check; the next child frame
+replaces the list and clears staleness. Stop detection stays handle-based —
+these are self-reported liveness facets, never authority.
 
 ### Logs
 
