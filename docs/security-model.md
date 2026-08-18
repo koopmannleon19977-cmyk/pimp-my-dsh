@@ -184,6 +184,24 @@ the repository, branch, and content before anything is sent.
   error and the agent tells the user to push.
 - The provider errors are bounded and never echo credentials.
 
+## Curated docs MCP: Context7, preconfigured but opt-in
+
+The distribution ships one preconfigured docs MCP server (`mcp-context7`) so
+enabling documentation search is a single environment variable
+(`PIMP_DSH_ENABLE_CONTEXT7=1`) instead of config work. It is opt-in like every
+other external surface: without the flag the row is dormant and no connection
+is ever attempted.
+
+- Transport is **streamable HTTP to the single fixed host**
+  `https://mcp.context7.com/mcp` — no third-party code runs locally (no stdio
+  child process, no package install), and the client can only reach that host
+  through this row.
+- No key is required; the optional `PIMP_DSH_CONTEXT7_KEY` only raises rate
+  limits and is sent as a Bearer header, covered by the `DSH_PIMP_*` log
+  redaction.
+- `failOnStartupError: false`: a Context7 outage degrades the session (tools
+  absent) but never blocks it.
+
 ## LSP: explicit opt-in, unsandboxed
 
 Language-server navigation (go-to-definition, find-references,

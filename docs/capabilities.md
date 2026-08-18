@@ -34,6 +34,7 @@ snapshot; the roadmap is in [roadmap.md](roadmap.md).
 | Durable memory | **Enabled** | `pimp_memory`: canonical non-linked JSONL under `DSH_HOME`; bounded recall |
 | Community plugins | **Reviewed allowlist gate** | Policy, not code; no registry |
 | GitHub write automation | **Opt-in, approval-gated** | `pimp_github_write`: PR/issue/comment via fixed-argv `gh`; every call asks; push deferred (human step) |
+| Docs MCP (Context7) | **Opt-in** | `mcp-context7`: preconfigured streamable HTTP to the fixed host `mcp.context7.com`; no local code, no key required; `PIMP_DSH_ENABLE_CONTEXT7` + optional `PIMP_DSH_CONTEXT7_KEY` |
 
 All shipped tools use DSH canonical structured values for runtime/UI consumers
 and separate bounded text renderers for model-facing results. The

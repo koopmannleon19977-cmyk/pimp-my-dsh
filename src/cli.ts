@@ -217,6 +217,8 @@ function harnessEnvironment(): Environment {
     ['PIMP_DSH_ENABLE_WEB_SEARCH', 'DSH_PIMP_ENABLE_WEB_SEARCH'],
     ['PIMP_DSH_WEB_SEARCH_KEY', 'DSH_PIMP_WEB_SEARCH_KEY'],
     ['PIMP_DSH_ENABLE_BROWSER', 'DSH_PIMP_ENABLE_BROWSER'],
+    ['PIMP_DSH_CONTEXT7_KEY', 'DSH_PIMP_CONTEXT7_KEY'],
+    ['PIMP_DSH_ENABLE_CONTEXT7', 'DSH_PIMP_ENABLE_CONTEXT7'],
   ] as const
   for (const [publicName, protectedName] of promotions) {
     const value = environment[publicName]

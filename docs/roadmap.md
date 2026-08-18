@@ -138,6 +138,9 @@ no-fork decision.
 - [x] Approval-gated GitHub write tooling (`pimp_github_write`: PR, issue,
       comment; every call asks; push deferred) — added beyond the original
       phase scope.
+- [x] Curated docs MCP defaults (Context7 preconfigured as streamable HTTP,
+      opt-in via `PIMP_DSH_ENABLE_CONTEXT7`) — added beyond the original
+      phase scope.
 
 ## Phase 3 (optional, future) — macOS / Linux parity (desktop)
 

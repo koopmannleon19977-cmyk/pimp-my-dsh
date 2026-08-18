@@ -84,6 +84,11 @@ describe("cordis.patch.yml contract", () => {
     expect(text).not.toMatch(/lsp\s*:\s*true|enableLsp\s*:\s*true/i);
   });
 
+  it("curates Context7 docs MCP as opt-in streamable HTTP (no local code)", () => {
+    const row = findRow(text, /-\s+insert:/i);
+    expect(row).toMatch(/id:\s*mcp-context7[\s\S]*?name:\s*'@deepseek-ai\/dsh-mcp-client'[\s\S]*?disabled:\s*!!js process\.env\.DSH_PIMP_ENABLE_CONTEXT7 !== '1'[\s\S]*?transport\s*:\s*streamable-http[\s\S]*?url:\s*'https:\/\/mcp\.context7\.com\/mcp'[\s\S]*?failOnStartupError\s*:\s*false/);
+  });
+
   it("inserts the distribution-owned plugin", () => {
     expect(text).toMatch(/pimp-my-dsh/i);
   });

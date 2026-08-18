@@ -196,6 +196,7 @@ Full details: [docs/windows-support.md](docs/windows-support.md).
 | Durable memory | Enabled (`pimp_memory`, append-only under `DSH_HOME`) |
 | GitHub repository / issue / PR / file reads | Enabled (`pimp_github_read`, fixed read operations) |
 | Telemetry | Disabled unconditionally |
+| Docs MCP (Context7) | Opt-in, preconfigured (`PIMP_DSH_ENABLE_CONTEXT7`; fixed-host streamable HTTP, no local code) |
 | Web fetch | Disabled (SSRF risk) |
 | Web search | Opt-in (`pimp_web_search`, fixed-host Tavily API) |
 | Browser automation | Opt-in, isolated Chrome; risk-gated, unsafe server code denied |

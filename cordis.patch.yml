@@ -148,6 +148,20 @@
         toolCallTimeoutMs: 70000
         failOnStartupError: true
 
+    # Curated default docs MCP: Context7 over streamable HTTP. Fixed host,
+    # no local code, no key required (the optional key raises rate limits).
+    # Preconfigured but opt-in like every external surface; outage-tolerant.
+    - id: mcp-context7
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: !!js process.env.DSH_PIMP_ENABLE_CONTEXT7 !== '1'
+      config:
+        serverName: context7
+        transport: streamable-http
+        url: 'https://mcp.context7.com/mcp'
+        headers: !!js "process.env.DSH_PIMP_CONTEXT7_KEY ? { authorization: 'Bearer ' + process.env.DSH_PIMP_CONTEXT7_KEY } : {}"
+        toolCallTimeoutMs: 60000
+        failOnStartupError: false
+
     # LSP servers are trusted local processes and receive no DSH sandbox.
     # All three rows remain dormant unless the operator explicitly opts in.
     - id: lsp
