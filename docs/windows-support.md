@@ -174,3 +174,10 @@ No elevation, no machine-wide registry writes, no service controls. Autostart
 State files, logs, and bridge pipe artifacts live under the per-user
 application data directory. The harness home (`DSH_HOME`) and managed profile
 directory must remain outside the writable workspace.
+
+Supervisor settings (theme, fixed port, restart policy, notification
+opt-in) persist per supervised profile at
+`%LOCALAPPDATA%\pimp-my-dsh\state\<profile>.json` and are written after each
+change. Run history is a single global `runs.json` in the same directory.
+Persistence is best-effort: the in-memory value stays authoritative if a
+disk write fails.

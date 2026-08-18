@@ -91,7 +91,7 @@ no-fork decision.
 - [x] Structured `doctor --json` delegation from tray.
 - [x] Crash/restart policy knob (never/always; `ask` deferred — not shipped).
 - [x] State-change notifications (Windows toasts via `tauri-plugin-notification`).
-- [ ] Per-profile state in the tray controller.
+- [x] Per-profile state in the tray controller (settings persist per supervised profile; run history stays global).
 - [x] `set_fixed_port` UI in the control surface.
 - [ ] Health check polling from the bridge.
 

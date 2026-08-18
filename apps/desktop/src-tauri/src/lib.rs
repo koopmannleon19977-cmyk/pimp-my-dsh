@@ -78,17 +78,29 @@ mod desktop_app {
 
     #[tauri::command]
     fn set_theme(theme: types::Theme) -> Result<(), String> {
-        commands::set_theme(theme)
+        let result = commands::set_theme(theme);
+        if result.is_ok() {
+            commands::persist_settings();
+        }
+        result
     }
 
     #[tauri::command]
     fn set_fixed_port(port: Option<u16>) -> Result<(), String> {
-        commands::set_fixed_port(port)
+        let result = commands::set_fixed_port(port);
+        if result.is_ok() {
+            commands::persist_settings();
+        }
+        result
     }
 
     #[tauri::command]
     fn set_restart_policy(policy: types::RestartPolicy) -> Result<(), String> {
-        commands::set_restart_policy(policy)
+        let result = commands::set_restart_policy(policy);
+        if result.is_ok() {
+            commands::persist_settings();
+        }
+        result
     }
 
     #[tauri::command]
@@ -107,7 +119,11 @@ mod desktop_app {
 
     #[tauri::command]
     fn set_notifications_enabled(enabled: bool) -> Result<(), String> {
-        commands::set_notifications_enabled(enabled)
+        let result = commands::set_notifications_enabled(enabled);
+        if result.is_ok() {
+            commands::persist_settings();
+        }
+        result
     }
 
     fn focus_main(app: &tauri::AppHandle) {

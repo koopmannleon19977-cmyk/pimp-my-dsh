@@ -76,6 +76,48 @@ fn save_runs(runs: &[crate::types::RunRecord]) -> Result<(), String> {
     std::fs::write(&path, text).map_err(|e| e.to_string())
 }
 
+/// The controller supervises exactly one profile today; settings are keyed by
+/// it so a future profile selector needs no migration.
+pub(crate) const SUPERVISED_PROFILE: &str = "web";
+
+fn state_file() -> PathBuf {
+    if let Some(appdata) = std::env::var_os("LOCALAPPDATA") {
+        PathBuf::from(appdata)
+            .join("pimp-my-dsh")
+            .join("state")
+            .join(format!("{SUPERVISED_PROFILE}.json"))
+    } else {
+        std::env::temp_dir()
+            .join("pimp-my-dsh")
+            .join("state")
+            .join(format!("{SUPERVISED_PROFILE}.json"))
+    }
+}
+
+/// Best-effort load: a missing or malformed settings file starts at defaults.
+fn settings_from_file(path: &std::path::Path) -> Settings {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => Settings::default(),
+    }
+}
+
+fn settings_to_file(path: &std::path::Path, settings: &Settings) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string(settings).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| e.to_string())
+}
+
+fn load_settings() -> Settings {
+    settings_from_file(&state_file())
+}
+
+fn save_settings(settings: &Settings) -> Result<(), String> {
+    settings_to_file(&state_file(), settings)
+}
+
 fn random_hex(bytes: usize) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut buf = vec![0u8; bytes];
@@ -151,7 +193,7 @@ impl Supervisor {
                 health: Vec::new(),
                 recent_runs: load_runs(),
                 doctor: None,
-                settings: Settings::default(),
+                settings: load_settings(),
                 compatibility: CompatibilityView::default(),
                 logs: LogSink::new(2000, Some(log_folder())),
             })),
@@ -484,6 +526,14 @@ impl Supervisor {
         }
         self.emit();
         Ok(())
+    }
+
+    /// Best-effort persist the current settings for the supervised profile.
+    /// The in-memory value is authoritative; disk failures are ignored by the
+    /// caller.
+    pub fn persist_settings(self: &Arc<Self>) -> Result<(), String> {
+        let res = self.resources.lock().expect("resources lock");
+        save_settings(&res.settings)
     }
 
     fn set_compat(&self, verified: bool) {
@@ -1179,4 +1229,61 @@ fn spawn_bounded_drain(
         }
         out
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::RestartPolicy;
+
+    fn test_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "pimp-dsh-state-test-{}-{}",
+            std::process::id(),
+            name
+        ))
+    }
+
+    #[test]
+    fn settings_roundtrip_persists_all_fields() {
+        let dir = test_dir("roundtrip");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("settings.json");
+        let original = Settings {
+            theme: Theme::Dark,
+            fixed_port: Some(3080),
+            restart_policy: RestartPolicy::Always,
+            notifications_enabled: true,
+        };
+        assert!(settings_to_file(&path, &original).is_ok());
+        assert_eq!(settings_from_file(&path), original);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_load_missing_file_falls_back_to_defaults() {
+        let dir = test_dir("missing");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("settings.json");
+        assert_eq!(settings_from_file(&path), Settings::default());
+    }
+
+    #[test]
+    fn settings_load_malformed_file_falls_back_to_defaults() {
+        let dir = test_dir("malformed");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, b"not json").unwrap();
+        assert_eq!(settings_from_file(&path), Settings::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn state_file_is_scoped_to_supervised_profile() {
+        assert_eq!(
+            state_file().file_name().unwrap().to_str().unwrap(),
+            format!("{SUPERVISED_PROFILE}.json").as_str()
+        );
+    }
 }

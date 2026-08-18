@@ -70,6 +70,13 @@ pub fn set_notifications_enabled(enabled: bool) -> Result<(), String> {
     supervisor().set_notifications_enabled(enabled)
 }
 
+/// Persist the current settings for the supervised profile (best-effort).
+/// Invoked by the Tauri layer after a successful setter command so the plain
+/// command surface stays disk-free for contract tests.
+pub fn persist_settings() {
+    let _ = supervisor().persist_settings();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
