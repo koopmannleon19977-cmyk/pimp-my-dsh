@@ -1,0 +1,178 @@
+name: Release
+
+# Build the signed NSIS installer + Tauri updater artifacts and publish them
+# as a GitHub Release whenever a `v*` tag is pushed. This is the only path
+# through which signed desktop binaries leave development.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Least privilege: read-only everywhere except the release job below.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: windows-latest
+    # `contents: write` is the minimum GitHub requires for `gh release create`.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # RELEASE BLOCKER (roadmap rule). This gate runs before `tauri build` so
+      # no artifact can ever be produced (and thus cannot leak) unsigned. The
+      # four secrets cover both signing channels: Authenticode (the .pfx) and
+      # Tauri updater signing (minisign keypair).
+      - name: Verify signing secrets
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CERT_PFX_BASE64: ${{ secrets.CERT_PFX_BASE64 }}
+          CERT_PFX_PASSWORD: ${{ secrets.CERT_PFX_PASSWORD }}
+        run: |
+          $required = 'TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'CERT_PFX_BASE64', 'CERT_PFX_PASSWORD'
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -gt 0) {
+            Write-Error "RELEASE BLOCKER: missing signing secrets: $($missing -join ', '). Unsigned artifacts must never leave development. Aborting before build."
+            exit 1
+          }
+          Write-Host 'All four signing secrets present.'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stage runtime payload
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stage-runtime.ps1
+
+
+      # Decode the Authenticode .pfx and import it into the runner's personal
+      # certificate store, capturing the thumbprint for the build step. The
+      # thumbprint is what `bundle.windows.certificateThumbprint` consumes.
+      - name: Import code-signing certificate
+        shell: pwsh
+        env:
+          CERT_PFX_BASE64: ${{ secrets.CERT_PFX_BASE64 }}
+          CERT_PFX_PASSWORD: ${{ secrets.CERT_PFX_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+          $secure = ConvertTo-SecureString $env:CERT_PFX_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation 'Cert:\CurrentUser\My' -Password $secure
+          "CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Imported code-signing certificate thumbprint $($cert.Thumbprint)"
+
+      # Signed build. TAURI_SIGNING_PRIVATE_KEY(+PASSWORD) drive the minisign
+      # signature of the updater archive; the merged `--config` drives the
+      # Authenticode (signtool) signature of the .exe. `--config` accepts an
+      # inline JSON string and is merged over tauri.conf.json (where the
+      # sibling slice sets `bundle.createUpdaterArtifacts: true` and the
+      # updater plugin pubkey/endpoints).
+      - name: Build signed installer and updater
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $config = '{"bundle":{"windows":{"certificateThumbprint":"' + $env:CERT_THUMBPRINT + '","timestampUrl":"http://timestamp.digicert.com","digestAlgorithm":"sha256"}}}'
+          pnpm --filter @pimp-my-dsh/desktop tauri build --config $config
+
+      # Verify the exact updater artifact layout before publishing.
+      #
+      # tauri-cli 2.11.4 (`createUpdaterArtifacts: true` + NSIS) emits, under
+      #   src-tauri/target/release/bundle/nsis/:
+      #     {productName}_{version}_x64-setup.exe          the normal installer
+      #     {productName}_{version}_x64-setup.nsis.zip      the updater archive (zip of the .exe)
+      #     {productName}_{version}_x64-setup.nsis.zip.sig  minisign signature (base64) of the .zip
+      # The updater plugin downloads the .nsis.zip (NOT the .exe), verifies the
+      # .sig, extracts and runs the contained installer. `latest.json` is NOT
+      # produced by `tauri build` — this workflow generates it below; its
+      # `platforms.windows-x86_64.signature` is the raw contents of the .sig
+      # file and `url` points at the .nsis.zip asset on the GitHub Release.
+      # Hard-fail if any of the three build artifacts is missing.
+      - name: Locate artifacts and generate update manifest
+        id: artifacts
+        shell: pwsh
+        run: |
+          $root = 'apps/desktop/src-tauri/target/release/bundle/nsis'
+          $exe = Get-ChildItem -Path $root -Filter '*-setup.exe' | Select-Object -First 1
+          $zip = Get-ChildItem -Path $root -Filter '*-setup.nsis.zip' | Select-Object -First 1
+          $sig = Get-ChildItem -Path $root -Filter '*-setup.nsis.zip.sig' | Select-Object -First 1
+          if (-not $exe) { Write-Error "Missing NSIS installer (*-setup.exe) under $root"; exit 1 }
+          if (-not $zip) { Write-Error "Missing updater archive (*-setup.nsis.zip) under $root"; exit 1 }
+          if (-not $sig) { Write-Error "Missing updater signature (*-setup.nsis.zip.sig) under $root"; exit 1 }
+
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $conf = Get-Content -Raw 'apps/desktop/src-tauri/tauri.conf.json' | ConvertFrom-Json
+          if ($conf.version -ne $version) {
+            Write-Error "Version skew: tag '$version' vs tauri.conf.json '$($conf.version)'. Refusing to publish a manifest that would re-offer the same build."
+            exit 1
+          }
+          $sigContent = (Get-Content -Raw $sig.FullName).Trim()
+          $encoded = [uri]::EscapeDataString($zip.Name)
+          $url = "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh/releases/latest/download/$encoded"
+
+          $manifest = [ordered]@{
+            version   = $version
+            notes     = ''
+            pub_date  = $pubDate
+            platforms = [ordered]@{
+              'windows-x86_64' = [ordered]@{
+                signature = $sigContent
+                url       = $url
+              }
+            }
+          }
+          $manifestPath = 'apps/desktop/src-tauri/target/release/latest.json'
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath -Encoding utf8
+
+          "EXE_PATH=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ZIP_PATH=$($zip.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SIG_PATH=$($sig.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MANIFEST_PATH=$manifestPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          Write-Host "Installer : $($exe.Name)"
+          Write-Host "Updater   : $($zip.Name)"
+          Write-Host "Signature : $($sig.Name)"
+          Write-Host "Manifest  : latest.json -> $url"
+
+      # Publish the release. Asset names are preserved verbatim, so the
+      # uploaded .nsis.zip name matches the `url` emitted into latest.json,
+      # and GitHub serves it at /releases/latest/download/<name>.
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            $env:EXE_PATH `
+            $env:ZIP_PATH `
+            $env:SIG_PATH `
+            $env:MANIFEST_PATH `
+            --repo $env:GITHUB_REPOSITORY `
+            --title $env:GITHUB_REF_NAME `
+            --target $env:GITHUB_REF_NAME `
+            --notes "Signed release for $env:GITHUB_REF_NAME"
+
+      - name: Summary
+        shell: pwsh
+        run: |
+          Write-Host "Published release $env:GITHUB_REF_NAME with assets:"
+          Write-Host "  - $(Split-Path $env:EXE_PATH -Leaf)"
+          Write-Host "  - $(Split-Path $env:ZIP_PATH -Leaf)"
+          Write-Host "  - $(Split-Path $env:SIG_PATH -Leaf)"
+          Write-Host "  - $(Split-Path $env:MANIFEST_PATH -Leaf)"

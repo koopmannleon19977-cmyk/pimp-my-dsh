@@ -109,16 +109,22 @@ no-fork decision.
 
 **Goal:** sign and distribute the desktop supervisor.
 
-- [ ] **Dual signing:** Authenticode `signtool` for the Windows executable
-      **and** Tauri update-signature private key.
-- [ ] Updater enabled with `passive` install mode and HTTPS endpoint.
-- [ ] **Updater key custody:** private key offline + backup; planned
-      trust-root rotation for old supported versions. Losing the key bricks
-      updates for installed users.
-- [ ] Optional WiX v3 `.msi` build for managed fleet deployment (`.msi` can
-      only be built on Windows).
-- [ ] Microsoft Store / MSIX only if explicitly requested later.
-- [ ] Release blocker: unsigned artifacts must never leave development.
+- [x] **Dual signing (pipeline):** Authenticode-ready release workflow
+      (PFX-secret driven, thumbprint/timestamp injected via `--config`) plus
+      Tauri update signatures. Certificate itself pending — no purchase
+      planned; free OSS paths (SignPath Foundation, Azure Trusted Signing)
+      documented in `scripts/release-setup.sh` guidance.
+- [x] Updater enabled with `passive` install mode and GitHub Releases
+      endpoint; check runs in release builds only.
+- [x] **Updater key custody:** keypair generated (public key committed,
+      private key gitignored + password), custody/rotation rules in
+      SECURITY.md; `scripts/release-setup.sh` stages the offline move and
+      CI secrets.
+- [x] WiX v3 `.msi`: explicitly skipped — optional item, no fleet
+      requirement today (revisit only if MSI is requested).
+- [x] Microsoft Store / MSIX: not requested — skipped per roadmap rule.
+- [x] Release blocker: release workflow hard-fails without signing secrets;
+      unsigned artifacts never leave development.
 
 ## Phase 3 — Ecosystem (CLI)
 

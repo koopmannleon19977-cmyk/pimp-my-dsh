@@ -31,3 +31,6 @@ apps/desktop/src-tauri/.runtime-staging-*/
 apps/desktop/src-tauri/.runtime-backup-*/
 apps/desktop/src-tauri/gen/
 
+
+# Tauri updater signing keys (private key + password are secrets; the .pub is committed via tauri.conf.json)
+keys/

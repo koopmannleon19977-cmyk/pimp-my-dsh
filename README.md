@@ -249,8 +249,8 @@ structured health reporting — all on Windows 10/11 x64.
 | **Runtime manifest** | `compatibility` manifest v1 verified before launch: controller `0.1.0`, Node `24.19.0`, pnpm `11.7.0`, distribution `0.1.0`, DSH `0.1.0-rc.6`, target `x86_64-pc-windows-msvc`, `node.exe` SHA-256, payload tree hash. |
 | **Data / log paths** | State, logs, and bridge artifacts live under the per-user app data directory. The harness home (`DSH_HOME`) and managed profile directory must remain outside the writable workspace. |
 | **NSIS installer** | Per-user `*-setup.exe`, `downloadBootstrapper` WebView2 mode (+0 MB on systems with Edge updates). Uninstall removes the app, shortcuts, and per-user uninstall registry entry while preserving controller state/logs and `DSH_HOME` profile data. |
-| **Signing boundary** | Dual signing planned for Phase 2: Authenticode `signtool` for the Windows executable **and** Tauri's mandatory update-signature private key. Development builds are unsigned — **development only, not for distribution**. |
-| **Updater key boundary** | Tauri's updater requires a signed private key; losing it bricks updates. Key custody (offline backup, planned trust-root rotation) is an operational prerequisite. **No updater is shipped in Phase 0.** |
+| **Signing boundary** | Dual signing is wired for Phase 2: the release workflow injects an Authenticode certificate (PFX secret + thumbprint) and signs updater artifacts with the Tauri private key. Development builds are unsigned — **development only, not for distribution**. |
+| **Updater key boundary** | Tauri's updater requires a signed private key; losing it bricks updates. The keypair is generated (public key committed, private key gitignored), custody/rotation rules live in SECURITY.md, and `scripts/release-setup.sh` walks the offline move + CI secret setup. |
 
 ### What it does not do
 

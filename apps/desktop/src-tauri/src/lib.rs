@@ -159,6 +159,7 @@ mod desktop_app {
                 tauri_plugin_autostart::MacosLauncher::LaunchAgent,
                 None,
             ))
+            .plugin(tauri_plugin_updater::Builder::new().build())
             .setup(|app| {
                 let supervisor = commands::init_supervisor();
                 let resource_dir = app.path().resource_dir().ok();
@@ -216,6 +217,20 @@ mod desktop_app {
                 });
 
                 build_tray(app)?;
+
+                // Passive update check (release builds only; dev never phones home).
+                if !cfg!(debug_assertions) {
+                    let updater_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        use tauri_plugin_updater::UpdaterExt;
+                        if let Ok(updater) = updater_handle.updater() {
+                            if let Ok(Some(update)) = updater.check().await {
+                                let _ = update.download_and_install(|_, _| {}, || {}).await;
+                            }
+                        }
+                    });
+                }
+
                 Ok(())
             })
             .on_window_event(|window, event| {

@@ -35,10 +35,21 @@
       }
     ]
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRGMjY2REU3RTZEMDY5MTEKUldRUmFkRG01MjBtVCtROFd1ODFFeUlvRDI3Z1Q4blRxY0NLcHFObG9Bd2ttMlYzNXdkSkY3eGoK",
+      "endpoints": [
+        "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

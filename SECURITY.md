@@ -126,6 +126,39 @@ The CLI never logs secret values. Environment variables that carry credentials
 structured CLI output. Structured CLI results (`--json`) contain only
 non-secret status and diagnostic fields.
 
+## Release signing & updater key custody
+
+Desktop releases use two independent signatures:
+
+1. **Tauri update signature** — an ed25519 keypair signs every updater
+   artifact. The public key is committed (`tauri.conf.json →
+   plugins.updater.pubkey`); the private key and its password live in
+   `keys/` (gitignored) and are the crown jewels of the update channel.
+2. **Authenticode certificate** — signs the Windows binaries/installer. The
+   release workflow consumes it as GitHub secrets (`CERT_PFX_BASE64`,
+   `CERT_PFX_PASSWORD`); no certificate is committed or shipped.
+
+**Custody rules (updater key):**
+
+- Move the private key and password offline (password manager + encrypted
+  backup) before the first public release; `scripts/release-setup.sh` stages
+  this move and the CI secret upload.
+- CI secrets (`TAURI_SIGNING_PRIVATE_KEY`,
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) are a working copy, not the backup.
+- **Losing the private key or its password bricks updates** for every
+  installed user: new versions can no longer be signed. There is no recovery.
+- **Rotation plan:** before a key must rotate (leak, machine loss), document
+  the old supported version range whose updates keep the old key; ship one
+  final old-key-signed release that carries a new-key build, then re-point
+  the endpoint and retire the old key. Rotation is a breaking event for
+  in-place updates and must be a planned, announced transition.
+
+**Release blocker:** `.github/workflows/release.yml` hard-fails when any of
+the four signing secrets is missing — unsigned artifacts never leave
+development. Free signing paths for open-source projects (SignPath
+Foundation; Microsoft Azure Trusted Signing free tier) are noted in
+`scripts/release-setup.sh` for when a certificate is chosen.
+
 ## Secret scanning
 
 This repository relies on GitHub's native secret scanning and push protection,

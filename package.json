@@ -56,7 +56,7 @@
     "desktop:typecheck": "pnpm --filter @pimp-my-dsh/desktop typecheck",
     "desktop:test": "pnpm --filter @pimp-my-dsh/desktop test",
     "desktop:build": "pnpm --filter @pimp-my-dsh/desktop tauri build --no-bundle",
-    "desktop:bundle": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stage-runtime.ps1 && pnpm --filter @pimp-my-dsh/desktop tauri build"
+    "desktop:bundle": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stage-runtime.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-desktop.ps1"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.1",
