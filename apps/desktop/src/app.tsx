@@ -52,7 +52,6 @@ import type {
   LogEvent,
   LogLevel,
   LogSource,
-  RecentRun,
   RestartPolicy,
   Snapshot,
   ThemePreference,

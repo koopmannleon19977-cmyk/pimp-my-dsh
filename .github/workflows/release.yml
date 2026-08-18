@@ -59,7 +59,6 @@ jobs:
       - name: Stage runtime payload
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stage-runtime.ps1
 
-
       # Decode the Authenticode .pfx and import it into the runner's personal
       # certificate store, capturing the thumbprint for the build step. The
       # thumbprint is what `bundle.windows.certificateThumbprint` consumes.
@@ -77,11 +76,8 @@ jobs:
           Write-Host "Imported code-signing certificate thumbprint $($cert.Thumbprint)"
 
       # Signed build. TAURI_SIGNING_PRIVATE_KEY(+PASSWORD) drive the minisign
-      # signature of the updater archive; the merged `--config` drives the
-      # Authenticode (signtool) signature of the .exe. `--config` accepts an
-      # inline JSON string and is merged over tauri.conf.json (where the
-      # sibling slice sets `bundle.createUpdaterArtifacts: true` and the
-      # updater plugin pubkey/endpoints).
+      # signature of the updater artifact; the merged `--config` drives the
+      # Authenticode (signtool) signature of the .exe.
       - name: Build signed installer and updater
         shell: pwsh
         env:
@@ -93,28 +89,27 @@ jobs:
 
       # Verify the exact updater artifact layout before publishing.
       #
-      # tauri-cli 2.11.4 (`createUpdaterArtifacts: true` + NSIS) emits, under
+      # Empirically verified on 2026-08-18 (tauri-cli 2.11.4, createUpdaterArtifacts:
+      # true, NSIS): the build emits, under
       #   src-tauri/target/release/bundle/nsis/:
-      #     {productName}_{version}_x64-setup.exe          the normal installer
-      #     {productName}_{version}_x64-setup.nsis.zip      the updater archive (zip of the .exe)
-      #     {productName}_{version}_x64-setup.nsis.zip.sig  minisign signature (base64) of the .zip
-      # The updater plugin downloads the .nsis.zip (NOT the .exe), verifies the
-      # .sig, extracts and runs the contained installer. `latest.json` is NOT
-      # produced by `tauri build` — this workflow generates it below; its
-      # `platforms.windows-x86_64.signature` is the raw contents of the .sig
-      # file and `url` points at the .nsis.zip asset on the GitHub Release.
-      # Hard-fail if any of the three build artifacts is missing.
+      #     {productName}_{version}_x64-setup.exe      the installer (Authenticode-signed)
+      #     {productName}_{version}_x64-setup.exe.sig  minisign signature (base64) of the .exe
+      # NO .nsis.zip and NO latest.json are produced. tauri-plugin-updater 2.10.1
+      # accepts the raw .exe as the windows-x86_64 artifact (updater.rs `extract()`:
+      # zip → extract_zip, else extract_exe). The plugin fetches each endpoint URL
+      # directly as the manifest, so the endpoint in tauri.conf.json ends in
+      # /latest.json and this step generates it; `signature` is the raw .sig file
+      # content and `url` points at the .exe asset on the GitHub Release.
+      # Hard-fail if either artifact is missing.
       - name: Locate artifacts and generate update manifest
         id: artifacts
         shell: pwsh
         run: |
           $root = 'apps/desktop/src-tauri/target/release/bundle/nsis'
           $exe = Get-ChildItem -Path $root -Filter '*-setup.exe' | Select-Object -First 1
-          $zip = Get-ChildItem -Path $root -Filter '*-setup.nsis.zip' | Select-Object -First 1
-          $sig = Get-ChildItem -Path $root -Filter '*-setup.nsis.zip.sig' | Select-Object -First 1
+          $sig = Get-ChildItem -Path $root -Filter '*-setup.exe.sig' | Select-Object -First 1
           if (-not $exe) { Write-Error "Missing NSIS installer (*-setup.exe) under $root"; exit 1 }
-          if (-not $zip) { Write-Error "Missing updater archive (*-setup.nsis.zip) under $root"; exit 1 }
-          if (-not $sig) { Write-Error "Missing updater signature (*-setup.nsis.zip.sig) under $root"; exit 1 }
+          if (-not $sig) { Write-Error "Missing updater signature (*-setup.exe.sig) under $root"; exit 1 }
 
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
           $conf = Get-Content -Raw 'apps/desktop/src-tauri/tauri.conf.json' | ConvertFrom-Json
@@ -122,8 +117,9 @@ jobs:
             Write-Error "Version skew: tag '$version' vs tauri.conf.json '$($conf.version)'. Refusing to publish a manifest that would re-offer the same build."
             exit 1
           }
+          $pubDate = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
           $sigContent = (Get-Content -Raw $sig.FullName).Trim()
-          $encoded = [uri]::EscapeDataString($zip.Name)
+          $encoded = [uri]::EscapeDataString($exe.Name)
           $url = "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh/releases/latest/download/$encoded"
 
           $manifest = [ordered]@{
@@ -141,18 +137,16 @@ jobs:
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath -Encoding utf8
 
           "EXE_PATH=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "ZIP_PATH=$($zip.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "SIG_PATH=$($sig.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "MANIFEST_PATH=$manifestPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           Write-Host "Installer : $($exe.Name)"
-          Write-Host "Updater   : $($zip.Name)"
           Write-Host "Signature : $($sig.Name)"
           Write-Host "Manifest  : latest.json -> $url"
 
       # Publish the release. Asset names are preserved verbatim, so the
-      # uploaded .nsis.zip name matches the `url` emitted into latest.json,
-      # and GitHub serves it at /releases/latest/download/<name>.
+      # uploaded .exe name matches the `url` emitted into latest.json, and
+      # GitHub serves it at /releases/latest/download/<name>.
       - name: Create GitHub Release
         shell: pwsh
         env:
@@ -160,7 +154,6 @@ jobs:
         run: |
           gh release create $env:GITHUB_REF_NAME `
             $env:EXE_PATH `
-            $env:ZIP_PATH `
             $env:SIG_PATH `
             $env:MANIFEST_PATH `
             --repo $env:GITHUB_REPOSITORY `
@@ -173,6 +166,5 @@ jobs:
         run: |
           Write-Host "Published release $env:GITHUB_REF_NAME with assets:"
           Write-Host "  - $(Split-Path $env:EXE_PATH -Leaf)"
-          Write-Host "  - $(Split-Path $env:ZIP_PATH -Leaf)"
           Write-Host "  - $(Split-Path $env:SIG_PATH -Leaf)"
           Write-Host "  - $(Split-Path $env:MANIFEST_PATH -Leaf)"
