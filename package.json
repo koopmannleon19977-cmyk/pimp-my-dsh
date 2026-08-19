@@ -36,6 +36,7 @@
     "cordis.patch.yml",
     "profiles",
     "schema",
+    "docs",
     "scripts/confine-browser.ps1",
     "SECURITY.md",
     "LICENSE",

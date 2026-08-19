@@ -85,6 +85,7 @@ describe("package.json contract", () => {
       "profiles",
       "schema",
       "scripts/confine-browser.ps1",
+      "docs",
       "SECURITY.md",
       "LICENSE",
     ]) {

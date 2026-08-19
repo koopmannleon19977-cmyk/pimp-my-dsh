@@ -116,7 +116,8 @@ no-fork decision.
       default-home memory hardlinks, and an actual `Everyone:Modify` ACL grant
       when the host's `Get-Acl` probe is available; unavailable probes are
       reported as warnings rather than hidden).
-- [ ] Publish a plugin-authoring guide for the reviewed allowlist gate.
+- [x] Publish a plugin-authoring guide for the reviewed allowlist gate
+      (`docs/plugin-authoring.md`).
 
 ## Phase 2 — Distribution & trust (desktop)
 

@@ -238,11 +238,12 @@ community plugins. There is no implemented plugin registry and no automatic
 plugin discovery.
 
 A community plugin enters the distribution only through the **reviewed
-allowlist gate**. The machine-readable checklist is
+allowlist gate**. The complete authoring and review procedure is in
+[`docs/plugin-authoring.md`](plugin-authoring.md). The machine-readable
+checklist is
 [`schema/community-plugin-allowlist-v1.json`](../schema/community-plugin-allowlist-v1.json)
 and is validated against
 [`schema/community-plugin-allowlist-v1.schema.json`](../schema/community-plugin-allowlist-v1.schema.json):
-
 1. A human records the plugin's source, license, exact version, package
    integrity, permission surface, and Windows behavior.
 2. The plugin is pinned to an exact version and marked Windows-reviewed.
