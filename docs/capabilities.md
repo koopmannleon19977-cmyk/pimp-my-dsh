@@ -32,7 +32,7 @@ snapshot; the roadmap is in [roadmap.md](roadmap.md).
 | GitHub reads | **Enabled** | `pimp_github_read`: bounded repo, issue, PR, file, and issue/PR search through trusted `gh` |
 | Worktree subagents | **Enabled, approval-gated** | `subagent_worktree`: one-shot child on unique retained branch; tracked working state copied; untracked files excluded; sparse indexes, non-UTF-8 paths, submodules, and unsafe links rejected; no automatic merge/delete |
 | Durable memory | **Enabled** | `pimp_memory`: canonical non-linked JSONL under `DSH_HOME`; bounded recall |
-| Community plugins | **Reviewed allowlist gate** | Policy, not code; no registry |
+| Community plugins | **Reviewed allowlist gate** | Machine-readable checklist + exact-pin manifest validation; empty by default; no registry |
 | GitHub write automation | **Opt-in, approval-gated** | `pimp_github_write`: PR/issue/comment via fixed-argv `gh`; every call asks; push deferred (human step) |
 | Docs MCP (Context7) | **Opt-in** | `mcp-context7`: preconfigured streamable HTTP to the fixed host `mcp.context7.com`; no local code, no key required; `PIMP_DSH_ENABLE_CONTEXT7` + optional `PIMP_DSH_CONTEXT7_KEY` |
 

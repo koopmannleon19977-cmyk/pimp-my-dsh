@@ -41,6 +41,7 @@ button, input, select { font: inherit; }
 .state-success, .health-ok { color: var(--colorPaletteGreenForeground1); }
 .state-warning, .health-warning { color: var(--colorPaletteYellowForeground1); }
 .state-danger, .health-error { color: var(--colorPaletteRedForeground1); }
+.health-unavailable { color: var(--colorNeutralForeground2); }
 .state-informative { color: var(--colorPaletteBlueForeground2); }
 
 .secondary-text { color: var(--colorNeutralForeground2); }

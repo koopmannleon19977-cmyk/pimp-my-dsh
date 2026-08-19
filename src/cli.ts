@@ -24,6 +24,8 @@ const PROFILE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
 const playwrightMcpCli = join(dirname(require.resolve('@playwright/mcp/package.json')), 'cli.js')
+const COMMUNITY_PLUGIN_ALLOWLIST_PATH = join(packageRoot, 'schema', 'community-plugin-allowlist-v1.json')
+const REVIEWED_AT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
 type Output = Record<string, unknown>
 type Environment = NodeJS.ProcessEnv
@@ -43,6 +45,22 @@ interface ProfileManifest {
   packageManager: string
   dependencies: Record<string, string>
   dsh: { profile: { bundles: string[] } }
+}
+
+type CommunityPluginReview = {
+  name: string
+  version: string
+  integrity: string
+  source: string
+  license: string
+  permissions: {
+    filesystem: 'none' | 'workspace' | 'broad'
+    network: 'none' | 'public' | 'broad'
+    process: 'none' | 'child'
+  }
+  windows: { reviewed: true; notes: string }
+  reviewedBy: string
+  reviewedAt: string
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
@@ -148,8 +166,101 @@ function emit(value: Output, json: boolean): void {
     process.stdout.write(`${JSON.stringify({ schemaVersion: OUTPUT_SCHEMA_VERSION, ...value })}\n`)
     return
   }
-  for (const [key, entry] of Object.entries(value)) process.stdout.write(`${key}: ${String(entry)}\n`)
+  for (const [key, entry] of Object.entries(value)) {
+    const rendered = entry !== null && typeof entry === 'object' ? JSON.stringify(entry) : String(entry)
+    process.stdout.write(`${key}: ${rendered}\n`)
+  }
 }
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function reviewedCommunityPlugins(): CommunityPluginReview[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(COMMUNITY_PLUGIN_ALLOWLIST_PATH, 'utf8')) as unknown
+  } catch (error) {
+    throw new Error(`community plugin allowlist is unreadable: ${boundedReason(error)}`)
+  }
+  const root = objectRecord(parsed)
+  const rawPlugins = root?.plugins
+  if (root?.schemaVersion !== 1 || !Array.isArray(rawPlugins)) {
+    throw new Error('community plugin allowlist must be schemaVersion 1 with a plugins array')
+  }
+  const reserved: Record<string, true> = {
+    '@deepseek-ai/dsh-base': true,
+    '@deepseek-ai/dsh-headless': true,
+    '@deepseek-ai/dsh-web-app': true,
+    '@deepseek-ai/dsh-lsp': true,
+    '@deepseek-ai/dsh-lsp-stdio': true,
+    '@deepseek-ai/dsh-tool-lsp': true,
+    '@deepseek-ai/dsh-mcp-client': true,
+    '@playwright/mcp': true,
+    'pimp-my-dsh': true,
+    'pnpm': true,
+  }
+  const names = new Set<string>()
+  return rawPlugins.map((raw, index) => {
+    const record = objectRecord(raw)
+    const permissions = objectRecord(record?.permissions)
+    const windows = objectRecord(record?.windows)
+    const filesystem = permissions?.filesystem
+    const network = permissions?.network
+    const process = permissions?.process
+    if (
+      record === undefined
+      || typeof record.name !== 'string'
+      || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(record.name)
+      || reserved[record.name] === true
+      || names.has(record.name)
+      || typeof record.version !== 'string'
+      || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$/.test(record.version)
+      || typeof record.integrity !== 'string'
+      || !/^sha512-[A-Za-z0-9+/]+=*$/.test(record.integrity)
+      || typeof record.source !== 'string'
+      || record.source.length === 0
+      || typeof record.license !== 'string'
+      || record.license.length === 0
+      || permissions === undefined
+      || (filesystem !== 'none' && filesystem !== 'workspace' && filesystem !== 'broad')
+      || (network !== 'none' && network !== 'public' && network !== 'broad')
+      || (process !== 'none' && process !== 'child')
+      || filesystem === 'broad'
+      || network === 'broad'
+      || windows === undefined
+      || windows.reviewed !== true
+      || typeof windows.notes !== 'string'
+      || windows.notes.length === 0
+      || typeof record.reviewedBy !== 'string'
+      || record.reviewedBy.length === 0
+      || typeof record.reviewedAt !== 'string'
+      || !REVIEWED_AT_PATTERN.test(record.reviewedAt)
+      || !Number.isFinite(Date.parse(record.reviewedAt))
+    ) {
+      throw new Error(`community plugin allowlist entry ${index} is incomplete or not admissible`)
+    }
+    names.add(record.name)
+    return {
+      name: record.name,
+      version: record.version,
+      integrity: record.integrity,
+      source: record.source,
+      license: record.license,
+      permissions: {
+        filesystem: filesystem as CommunityPluginReview['permissions']['filesystem'],
+        network: network as CommunityPluginReview['permissions']['network'],
+        process: process as CommunityPluginReview['permissions']['process'],
+      },
+      windows: { reviewed: true, notes: windows.notes },
+      reviewedBy: record.reviewedBy,
+      reviewedAt: record.reviewedAt,
+    }
+  })
+}
+
 
 function templateBundles(profile: string): string[] {
   const bundles = ['@deepseek-ai/dsh-base']
@@ -159,19 +270,26 @@ function templateBundles(profile: string): string[] {
 }
 
 function profileManifest(profile: string): ProfileManifest {
+  const reviewed = reviewedCommunityPlugins()
+  const dependencies: Record<string, string> = {
+    'pimp-my-dsh': `link:${packageRoot.replaceAll('\\', '/')}`,
+    '@deepseek-ai/dsh-lsp': UPSTREAM_VERSION,
+    '@deepseek-ai/dsh-lsp-stdio': UPSTREAM_VERSION,
+    '@deepseek-ai/dsh-tool-lsp': UPSTREAM_VERSION,
+    '@deepseek-ai/dsh-mcp-client': UPSTREAM_VERSION,
+    '@playwright/mcp': PLAYWRIGHT_MCP_VERSION,
+  }
+  for (const plugin of reviewed) dependencies[plugin.name] = plugin.version
   return {
     name: `dsh-profile-${profile}`,
     private: true,
     packageManager: 'pnpm@11.7.0',
-    dependencies: {
-      'pimp-my-dsh': `link:${packageRoot.replaceAll('\\', '/')}`,
-      '@deepseek-ai/dsh-lsp': UPSTREAM_VERSION,
-      '@deepseek-ai/dsh-lsp-stdio': UPSTREAM_VERSION,
-      '@deepseek-ai/dsh-tool-lsp': UPSTREAM_VERSION,
-      '@deepseek-ai/dsh-mcp-client': UPSTREAM_VERSION,
-      '@playwright/mcp': PLAYWRIGHT_MCP_VERSION,
+    dependencies,
+    dsh: {
+      profile: {
+        bundles: [...templateBundles(profile), ...reviewed.map((plugin) => plugin.name), 'pimp-my-dsh'],
+      },
     },
-    dsh: { profile: { bundles: [...templateBundles(profile), 'pimp-my-dsh'] } },
   }
 }
 
@@ -393,6 +511,240 @@ function run(args: ParsedArgs): never {
   process.exit(child.status ?? 1)
 }
 
+type SandboxCheck = {
+  id: string
+  status: 'ok' | 'warning' | 'error' | 'unavailable'
+  message: string
+}
+
+const VOLUME_FILESYSTEM_SCRIPT = `
+$letters = @($env:DSH_DOCTOR_TARGET_1, $env:DSH_DOCTOR_TARGET_2) | Where-Object { $_ }
+$result = foreach ($letter in $letters) {
+  try {
+    $filesystem = Get-Volume -DriveLetter $letter -ErrorAction Stop | Select-Object -ExpandProperty FileSystem
+    [PSCustomObject]@{ letter = $letter; filesystem = $filesystem; error = $null }
+  } catch {
+    [PSCustomObject]@{ letter = $letter; filesystem = $null; error = $_.Exception.Message }
+  }
+}
+if ($result) { $result | ConvertTo-Json -Compress }
+`
+
+const EVERYONE_GRANTS_SCRIPT = `
+$targets = @($env:DSH_DOCTOR_TARGET_1, $env:DSH_DOCTOR_TARGET_2, $env:DSH_DOCTOR_TARGET_3) | Where-Object { $_ }
+$everyone = 'S-1-1-0'
+$anonymous = 'S-1-5-7'
+$names = @('Write', 'Modify', 'FullControl', 'ChangePermissions', 'TakeOwnership')
+$flags = @{}
+foreach ($name in $names) { $flags[$name] = [System.Security.AccessControl.FileSystemRights]::$name }
+$result = foreach ($target in $targets) {
+  $grants = @()
+  $probeError = $null
+  try {
+    $acl = Get-Acl -LiteralPath $target -ErrorAction Stop
+    foreach ($ace in $acl.Access) {
+      $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+      $identity = $null
+      if ($sid -eq $everyone) { $identity = 'Everyone' }
+      elseif ($sid -eq $anonymous) { $identity = 'Anonymous' }
+      if ($identity) {
+        $rights = @()
+        foreach ($name in $names) {
+          if (([int]$ace.FileSystemRights -band [int]$flags[$name]) -eq [int]$flags[$name]) { $rights += $name }
+        }
+        if ($rights.Count -gt 0) { $grants += ($identity + ':' + ($rights -join ',')) }
+      }
+    }
+  } catch {
+    $probeError = $_.Exception.Message
+  }
+  [PSCustomObject]@{ path = $target; grants = $grants; error = $probeError }
+}
+if ($result) { $result | ConvertTo-Json -Compress }
+`
+
+function boundedReason(error: unknown): string {
+  const reason = error instanceof Error ? error.message : String(error)
+  return reason.length > 256 ? `${reason.slice(0, 253)}...` : reason
+}
+
+function doctorEnvironment(first?: string, second?: string, third?: string): Environment {
+  const environment: Environment = { ...process.env }
+  delete environment.DSH_DOCTOR_TARGET_1
+  delete environment.DSH_DOCTOR_TARGET_2
+  delete environment.DSH_DOCTOR_TARGET_3
+  if (first !== undefined) environment.DSH_DOCTOR_TARGET_1 = first
+  if (second !== undefined) environment.DSH_DOCTOR_TARGET_2 = second
+  if (third !== undefined) environment.DSH_DOCTOR_TARGET_3 = third
+  return environment
+}
+
+function runPowerShell(args: string[], env: Environment, executable = 'powershell.exe'): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(executable, args, {
+    encoding: 'utf8',
+    env,
+    shell: false,
+    windowsHide: true,
+    timeout: 15_000,
+    maxBuffer: 16 * 1024,
+  })
+  if (result.error) throw result.error
+  return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+}
+
+function runPowerShell7(args: string[], env: Environment): { status: number | null; stdout: string; stderr: string } {
+  let lastError: unknown
+  for (const executable of ['pwsh.exe', 'pwsh']) {
+    try {
+      return runPowerShell(args, env, executable)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      lastError = error
+    }
+  }
+  return {
+    status: null,
+    stdout: '',
+    stderr: lastError instanceof Error ? lastError.message : 'PowerShell 7 (pwsh) is unavailable',
+  }
+}
+
+function probeFailureReason(status: number | null, stdout: string, stderr: string): string {
+  return boundedReason(stderr.trim() || stdout.trim() || `exit ${String(status)}`)
+}
+
+function jsonRecords(output: string): Array<Record<string, unknown>> {
+  const value: unknown = JSON.parse(output)
+  if (value === null) return []
+  return Array.isArray(value) ? value as Array<Record<string, unknown>> : [value as Record<string, unknown>]
+}
+
+function driveLetter(path: string): string | undefined {
+  const match = /^([A-Za-z]):/.exec(path)
+  return match?.[1]?.toUpperCase()
+}
+
+function sandboxTargets(workspace: string, home: string): string[] {
+  const targets = [workspace, home]
+  const memory = join(home, 'pimp-my-dsh', 'memory.jsonl')
+  if (existsSync(memory)) targets.push(memory)
+  return [...new Set(targets)]
+}
+
+function volumeFilesystemCheck(workspace: string, home: string): SandboxCheck {
+  const id = 'volume-filesystem'
+  try {
+    const workspaceDrive = driveLetter(workspace)
+    const homeDrive = driveLetter(home)
+    if (workspaceDrive === undefined || homeDrive === undefined) {
+      return { id, status: 'warning', message: 'check unavailable: no drive letter resolved' }
+    }
+    const { status, stdout, stderr } = runPowerShell(
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', VOLUME_FILESYSTEM_SCRIPT],
+      doctorEnvironment(workspaceDrive, homeDrive === workspaceDrive ? undefined : homeDrive),
+    )
+    if (status !== 0 || stdout.trim() === '') {
+      return { id, status: 'warning', message: `check unavailable: ${probeFailureReason(status, stdout, stderr)}` }
+    }
+    const volumes = jsonRecords(stdout)
+    const failedVolume = volumes.find((entry) => typeof entry.error === 'string' && entry.error.length > 0)
+    if (failedVolume !== undefined) {
+      return { id, status: 'warning', message: `check unavailable: ${boundedReason(failedVolume.error)}` }
+    }
+    const unsupported = volumes.filter((entry) => entry.filesystem !== 'NTFS' && entry.filesystem !== 'ReFS')
+    if (unsupported.length > 0) {
+      const affectedVolumes = unsupported.map((entry) => `${String(entry.letter ?? '?')}:${String(entry.filesystem || 'Unknown')}`).join(', ')
+      return { id, status: 'warning', message: `unsupported filesystem(s): ${affectedVolumes}; ACL sandboxing does not exist on FAT-family volumes` }
+    }
+    return { id, status: 'ok', message: 'all checked volumes use NTFS/ReFS' }
+  } catch (error) {
+    return { id, status: 'warning', message: `check unavailable: ${boundedReason(error)}` }
+  }
+}
+
+function hardLinkAliasesCheck(workspace: string, home: string): SandboxCheck {
+  const id = 'hard-link-aliases'
+  try {
+    const aliases: Array<{ path: string; links: number }> = []
+    for (const path of sandboxTargets(workspace, home)) {
+      const entry = lstatSync(path)
+      if (!entry.isFile()) continue
+      if (entry.nlink > 1) aliases.push({ path, links: entry.nlink })
+    }
+    if (aliases.length > 0) {
+      const paths = aliases.map(({ path, links }) => `${path} (${links} links)`).join(', ')
+      return { id, status: 'error', message: `hard links break the canonical-path boundary: ${paths}` }
+    }
+    return { id, status: 'ok', message: 'no hard-link aliases found' }
+  } catch (error) {
+    return { id, status: 'warning', message: `check unavailable: ${boundedReason(error)}` }
+  }
+}
+
+function everyoneGrantsCheck(workspace: string, home: string): SandboxCheck {
+  const id = 'everyone-grants'
+  try {
+    const [first, second, third] = sandboxTargets(workspace, home)
+    const { status, stdout, stderr } = runPowerShell(
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', EVERYONE_GRANTS_SCRIPT],
+      doctorEnvironment(first, second, third),
+    )
+    if (status !== 0 || stdout.trim() === '') {
+      return { id, status: 'warning', message: `check unavailable: ${probeFailureReason(status, stdout, stderr)}` }
+    }
+    const records = jsonRecords(stdout)
+    const failedAcl = records.find((entry) => typeof entry.error === 'string' && entry.error.length > 0)
+    if (failedAcl !== undefined) {
+      return { id, status: 'warning', message: `check unavailable: ${boundedReason(failedAcl.error)}` }
+    }
+    const grants = records.filter((entry) => Array.isArray(entry.grants) && entry.grants.length > 0)
+    if (grants.length > 0) {
+      const paths = grants.map((entry) => `${String(entry.path)} (${(entry.grants as string[]).join(', ')})`).join('; ')
+      return { id, status: 'error', message: `Everyone/Anonymous write access: ${paths}` }
+    }
+    return { id, status: 'ok', message: 'no Everyone/Anonymous write grants' }
+  } catch (error) {
+    return { id, status: 'warning', message: `check unavailable: ${boundedReason(error)}` }
+  }
+}
+
+function readSideConfinementCheck(): SandboxCheck {
+  return {
+    id: 'read-side-confinement',
+    status: 'unavailable',
+    message: 'unavailable: the upstream Windows WRITE_RESTRICTED token limits writes only; a native read policy or AppContainer token is not shipped',
+  }
+}
+
+function browserConfinementCheck(): SandboxCheck {
+  const id = 'browser-confinement'
+  try {
+    const { status } = runPowerShell7(
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(packageRoot, 'scripts', 'confine-browser.ps1'), '-Verify'],
+      doctorEnvironment(),
+    )
+    if (status === 0) return { id, status: 'ok', message: 'browser egress confined' }
+    if (status === null) return { id, status: 'unavailable', message: 'unavailable: PowerShell 7 (pwsh) is required to verify browser confinement' }
+    return { id, status: 'warning', message: 'browser automation enabled but egress not confined (run scripts/confine-browser.ps1 -Apply)' }
+  } catch (error) {
+    return { id, status: 'warning', message: `check unavailable: ${boundedReason(error)}` }
+  }
+}
+
+function sandboxChecks(): SandboxCheck[] | null {
+  if (process.platform !== 'win32') return null
+  const workspace = process.cwd()
+  const home = dshHome()
+  const checks = [
+    volumeFilesystemCheck(workspace, home),
+    hardLinkAliasesCheck(workspace, home),
+    everyoneGrantsCheck(workspace, home),
+    readSideConfinementCheck(),
+  ]
+  if (process.env.PIMP_DSH_ENABLE_BROWSER === '1') checks.push(browserConfinementCheck())
+  return checks
+}
+
 function doctor(args: ParsedArgs): void {
   let executable: string | undefined
   let executableError: string | undefined
@@ -427,6 +779,7 @@ function doctor(args: ParsedArgs): void {
     modelConfigured: Boolean(process.env.PIMP_DSH_MODEL),
     lspEnabled: process.env.PIMP_DSH_ENABLE_LSP === '1',
     telemetryEnabled: false,
+    sandboxChecks: sandboxChecks(),
   }, args.json)
 }
 
@@ -529,7 +882,7 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (parsed?.json) process.stderr.write(`${JSON.stringify({ error: message })}\n`)
+    if (parsed?.json || process.argv.slice(2).includes('--json')) process.stderr.write(`${JSON.stringify({ schemaVersion: OUTPUT_SCHEMA_VERSION, error: message })}\n`)
     else process.stderr.write(`pimp-dsh: ${message}\n`)
     process.exitCode = 1
   }

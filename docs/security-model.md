@@ -95,6 +95,14 @@ The runner reports `enforcement: 'partial'`. This is deliberate and honest:
 - **Writes are restricted; reads, network, and process visibility are not.**
   `WRITE_RESTRICTED` intersects write accesses only. A confined child can read
   any caller-readable file and open sockets.
+
+`doctor` surfaces the boundary status: volume filesystem (FAT-family volumes
+have no ACLs — flagged), hard-link aliases on the workspace/`DSH_HOME`/memory
+file, `Everyone` write grants on the same roots, and an explicit
+`read-side-confinement: unavailable` result because no native read policy or
+AppContainer token is shipped. When browser automation is enabled it also
+reports whether the Firewall confinement rules from
+`scripts/confine-browser.ps1` are active.
 - **`Everyone` grants remain ambient write authority.** `Everyone` must stay in
   the restricting list for early DLL initialization and CNG to work. An
   external NTFS object whose DACL grants `Everyone` a requested write right
@@ -228,16 +236,22 @@ community plugins. There is no implemented plugin registry and no automatic
 plugin discovery.
 
 A community plugin enters the distribution only through the **reviewed
-allowlist gate**, which is a policy, not code:
+allowlist gate**. The machine-readable checklist is
+[`schema/community-plugin-allowlist-v1.json`](../schema/community-plugin-allowlist-v1.json)
+and is validated against
+[`schema/community-plugin-allowlist-v1.schema.json`](../schema/community-plugin-allowlist-v1.schema.json):
 
-1. A human reviews the plugin's source, license, exact version, permission
-   surface, and Windows behavior.
-2. The plugin is pinned to an exact version in the allowlist.
-3. The allowlist is the only path by which a community plugin is installed.
+1. A human records the plugin's source, license, exact version, package
+   integrity, permission surface, and Windows behavior.
+2. The plugin is pinned to an exact version and marked Windows-reviewed.
+3. `setup` reads the artifact and admits only its entries; `run` rejects a
+   profile whose dependency or bundle set diverges from that reviewed manifest.
+4. The default allowlist is empty. There is no registry, auto-discovery, or
+   automatic admission.
 
-The gate is deliberately conservative. A plugin that requests broad filesystem
-or network access, or that has not been reviewed for Windows behavior, is not
-admitted.
+The gate is deliberately conservative. Entries requesting broad filesystem or
+network access, missing Windows review, duplicate names, or non-exact versions
+are rejected before installation.
 
 ## Setup and secrets handling
 

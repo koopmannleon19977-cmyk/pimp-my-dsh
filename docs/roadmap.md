@@ -77,12 +77,17 @@ no-fork decision.
       Playwright Chromium). Per-machine elevated step; enabling automation by
       default stays gated on that step per machine.
 - [ ] Add read-side confinement on Windows (pair the ACL write boundary with a
-      read-side policy or AppContainer capability token).
-- [ ] Add a community-plugin review checklist artifact that the reviewed
-      allowlist gate consumes.
-- [ ] Add `doctor` checks for the Windows sandbox boundaries (FAT volumes,
-      hard-link aliases, `Everyone` grants).
-- [ ] Add a `--json` schema version field to structured CLI results.
+      read-side policy or AppContainer capability token). The current upstream
+      token has no read restriction; `doctor` reports this as unavailable until
+      a native token/helper is shipped.
+- [x] Add a machine-readable community-plugin review checklist artifact that
+      the reviewed allowlist gate consumes (`schema/community-plugin-allowlist-v1`).
+- [x] Add `doctor` checks for the Windows sandbox boundaries (volume
+      filesystem, hard-link aliases, `Everyone` grants, browser-confinement
+      status, and explicit read-side unavailability) surfaced in the lobby
+      doctor panel.
+- [x] Add a `--json` schema version field to structured CLI results, including
+      JSON error output.
 
 ## Phase 1 — Polish (desktop)
 

@@ -95,7 +95,8 @@ The distribution narrows upstream's posture in four ways, each documented in
 2. **Web off** — the SSRF-prone HTTP fetch provider is not enabled.
 3. **LSP opt-in** — language servers run unsandboxed, so they require explicit
    consent.
-4. **Community plugins gated** — a reviewed allowlist gate, not auto-install.
+4. **Community plugins gated** — the committed reviewed checklist is the only
+   source for exact-pin admission; there is no auto-install or registry.
 
 ## Desktop supervisor architecture
 

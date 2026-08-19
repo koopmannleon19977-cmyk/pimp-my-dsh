@@ -47,6 +47,23 @@ describe("package.json contract", () => {
     expect([...schema.properties.profile.enum].sort()).toEqual(profiles);
   });
 
+  it("ships a versioned reviewed community-plugin checklist and empty default allowlist", () => {
+    const schema = JSON.parse(readText(join(ROOT, "schema", "community-plugin-allowlist-v1.schema.json"))) as {
+      additionalProperties: boolean;
+      required: string[];
+      properties: { schemaVersion: { const: number }; plugins: { type: string } };
+    };
+    const allowlist = JSON.parse(readText(join(ROOT, "schema", "community-plugin-allowlist-v1.json"))) as {
+      schemaVersion: number;
+      plugins: unknown[];
+    };
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.required).toEqual(["schemaVersion", "plugins"]);
+    expect(schema.properties.schemaVersion.const).toBe(1);
+    expect(schema.properties.plugins.type).toBe("array");
+    expect(allowlist).toEqual({ schemaVersion: 1, plugins: [] });
+  });
+
   it("is ESM with the documented entry points", () => {
     expect(pkg.type).toBe("module");
     expect(pkg.main).toBe("dist/plugin.js");
@@ -67,7 +84,7 @@ describe("package.json contract", () => {
       "cordis.patch.yml",
       "profiles",
       "schema",
-      "docs",
+      "scripts/confine-browser.ps1",
       "SECURITY.md",
       "LICENSE",
     ]) {

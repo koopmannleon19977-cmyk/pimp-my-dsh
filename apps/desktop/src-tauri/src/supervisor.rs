@@ -46,6 +46,12 @@ fn health_is_stale(health_at: Option<Instant>, run_start: Option<Instant>, now: 
     }
 }
 
+fn doctor_checks_ok(checks: Option<&[HealthCheck]>) -> bool {
+    checks.map_or(true, |checks| {
+        !checks.iter().any(|check| check.status == HealthStatus::Error)
+    })
+}
+
 fn active_provider(resource_dir: Option<PathBuf>) -> Box<dyn Provider> {
     #[cfg(debug_assertions)]
     {
@@ -484,21 +490,27 @@ impl Supervisor {
 
         let stdout_text = crate::logging::redact(&String::from_utf8_lossy(&stdout));
         match serde_json::from_str::<serde_json::Value>(stdout_text.trim()) {
-            Ok(v) => DoctorResult {
-                ok: true,
-                error: None,
-                node: v["node"].as_str().map(String::from),
-                platform: v["platform"].as_str().map(String::from),
-                architecture: v["architecture"].as_str().map(String::from),
-                dsh_available: v["dshAvailable"].as_bool(),
-                dsh_error: v["dshError"].as_str().map(String::from),
-                profile_ready: v["profileReady"].as_bool(),
-                api_key_configured: v["apiKeyConfigured"].as_bool(),
-                base_url_configured: v["baseUrlConfigured"].as_bool(),
-                model_configured: v["modelConfigured"].as_bool(),
-                lsp_enabled: v["lspEnabled"].as_bool(),
-                telemetry_enabled: v["telemetryEnabled"].as_bool(),
-            },
+            Ok(v) => {
+                let sandbox_checks = v
+                    .get("sandboxChecks")
+                    .and_then(|x| serde_json::from_value::<Vec<HealthCheck>>(x.clone()).ok());
+                DoctorResult {
+                    ok: doctor_checks_ok(sandbox_checks.as_deref()),
+                    error: None,
+                    node: v["node"].as_str().map(String::from),
+                    platform: v["platform"].as_str().map(String::from),
+                    architecture: v["architecture"].as_str().map(String::from),
+                    dsh_available: v["dshAvailable"].as_bool(),
+                    dsh_error: v["dshError"].as_str().map(String::from),
+                    profile_ready: v["profileReady"].as_bool(),
+                    api_key_configured: v["apiKeyConfigured"].as_bool(),
+                    base_url_configured: v["baseUrlConfigured"].as_bool(),
+                    model_configured: v["modelConfigured"].as_bool(),
+                    lsp_enabled: v["lspEnabled"].as_bool(),
+                    telemetry_enabled: v["telemetryEnabled"].as_bool(),
+                    sandbox_checks,
+                }
+            }
             Err(e) => DoctorResult {
                 ok: false,
                 error: Some(format!("parse doctor output: {e}")),
@@ -1280,8 +1292,26 @@ fn spawn_bounded_drain(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::types::RestartPolicy;
+
+    #[test]
+    fn doctor_error_check_requires_action() {
+        let mut checks = vec![HealthCheck {
+            id: "read-side-confinement".to_string(),
+            status: HealthStatus::Unavailable,
+            message: "not shipped".to_string(),
+        }];
+        assert!(doctor_checks_ok(Some(&checks)));
+        checks.push(HealthCheck {
+            id: "everyone-grants".to_string(),
+            status: HealthStatus::Error,
+            message: "ambient write grant".to_string(),
+        });
+        assert!(!doctor_checks_ok(Some(&checks)));
+        assert!(doctor_checks_ok(None));
+    }
 
     fn test_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { hostname, userInfo } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -250,6 +250,18 @@ describe("CLI contract (built dist)", () => {
       const parsed = JSON.parse(r.stdout);
       expect(typeof parsed).toBe("object");
       expect(Array.isArray(parsed)).toBe(false);
+      expect(parsed.schemaVersion).toBe(1);
+    });
+
+    it("includes the output schema version in error JSON", () => {
+      const home = makeTempDir();
+      const failure = runCli(["setup", "--profile", "unknown", "--json"], { DSH_HOME: home });
+      expect(failure.status).not.toBe(0);
+      expect(JSON.parse(failure.stderr)).toMatchObject({ schemaVersion: 1, error: expect.any(String) });
+
+      const parseFailure = runCli(["setup", "--not-an-option", "--json"], { DSH_HOME: home });
+      expect(parseFailure.status).not.toBe(0);
+      expect(JSON.parse(parseFailure.stderr)).toMatchObject({ schemaVersion: 1, error: expect.any(String) });
     });
 
     it("never leaks the API key", () => {
@@ -265,6 +277,82 @@ describe("CLI contract (built dist)", () => {
       const a = JSON.parse(runCli(["doctor", "--json"], { DSH_HOME: home }).stdout);
       const b = JSON.parse(runCli(["doctor", "--json"], { DSH_HOME: home }).stdout);
       expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
+    });
+
+    it.runIf(process.platform === "win32")("reports structured Windows sandbox checks", () => {
+      const home = makeTempDir();
+      const r = runCli(["doctor", "--json"], { DSH_HOME: home, PIMP_DSH_ENABLE_BROWSER: "0" });
+      expect(r.status).toBe(0);
+      const checks = JSON.parse(r.stdout).sandboxChecks;
+      expect(Array.isArray(checks)).toBe(true);
+      expect(checks.map((check: { id: string }) => check.id)).toEqual([
+        "volume-filesystem",
+        "hard-link-aliases",
+        "everyone-grants",
+        "read-side-confinement",
+      ]);
+      for (const check of checks) {
+        expect(["ok", "warning", "error", "unavailable"]).toContain(check.status);
+        expect(typeof check.message).toBe("string");
+      }
+      expect(checks.find((check: { id: string; status: string }) => check.id === "hard-link-aliases").status).toBe("ok");
+      expect(checks.find((check: { id: string }) => check.id === "read-side-confinement").status).toBe("unavailable");
+    });
+
+    it.runIf(process.platform === "win32")("renders sandbox checks in text output", () => {
+      const home = makeTempDir();
+      const r = runCli(["doctor"], { DSH_HOME: home, PIMP_DSH_ENABLE_BROWSER: "0" });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("sandboxChecks: ");
+      expect(r.stdout).toContain("read-side-confinement");
+      expect(r.stdout).not.toContain("[object Object]");
+    });
+
+    it.runIf(process.platform === "win32")("checks the default DSH_HOME and memory roots", () => {
+      const userHome = makeTempDir();
+      const defaultHome = join(userHome, ".dsh");
+      const memoryDirectory = join(defaultHome, "pimp-my-dsh");
+      const memory = join(memoryDirectory, "memory.jsonl");
+      mkdirSync(memoryDirectory, { recursive: true });
+      writeFileSync(memory, "{\"text\":\"default home\"}\n");
+      const alias = join(makeTempDir(), "memory-alias.jsonl");
+      linkSync(memory, alias);
+
+      const r = runCli(["doctor", "--json"], {
+        DSH_HOME: "",
+        HOME: userHome,
+        USERPROFILE: userHome,
+        PIMP_DSH_ENABLE_BROWSER: "0",
+      });
+      expect(r.status).toBe(0);
+      const checks = JSON.parse(r.stdout).sandboxChecks as Array<{ id: string; status: string; message: string }>;
+      const hardLinks = checks.find((check) => check.id === "hard-link-aliases");
+      expect(hardLinks).toMatchObject({ status: "error" });
+      expect(hardLinks?.message).toContain(memory);
+    });
+
+    it.runIf(process.platform !== "win32")("reports no sandbox checks off Windows", () => {
+      const home = makeTempDir();
+      const r = runCli(["doctor", "--json"], { DSH_HOME: home });
+      expect(r.status).toBe(0);
+      expect(JSON.parse(r.stdout).sandboxChecks).toBeNull();
+    });
+
+    it.runIf(process.platform === "win32")("omits browser confinement unless browser automation is enabled", () => {
+      const home = makeTempDir();
+      const r = runCli(["doctor", "--json"], { DSH_HOME: home, PIMP_DSH_ENABLE_BROWSER: "0" });
+      expect(r.status).toBe(0);
+      expect(JSON.parse(r.stdout).sandboxChecks.map((check: { id: string }) => check.id)).not.toContain("browser-confinement");
+    });
+
+    it("keeps doctor JSON deterministic", () => {
+      const home = makeTempDir();
+      const env = { DSH_HOME: home, PIMP_DSH_ENABLE_BROWSER: "0" };
+      const a = runCli(["doctor", "--json"], env);
+      const b = runCli(["doctor", "--json"], env);
+      expect(a.status).toBe(0);
+      expect(b.status).toBe(0);
+      expect(a.stdout).toBe(b.stdout);
     });
   });
 

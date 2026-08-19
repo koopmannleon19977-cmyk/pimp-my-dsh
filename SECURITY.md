@@ -71,9 +71,10 @@ MCP server. It uses an in-memory headless Chrome profile, receives the MCP
 client's credential-scrubbed environment and blocks service workers. Only a
 small allowlist of bounded inspection tools runs directly. Navigation,
 interactions, storage access, and unknown future browser tools require approval
-and fail closed without an answerer. Arbitrary code execution in the
-unsandboxed browser server is denied. Browser network egress is **not confined**.
-Do not enable it where the browser could reach sensitive internal services.
+Arbitrary code execution in the unsandboxed browser server is denied. Browser network egress is **not confined
+by the browser tool policy alone**. Optional per-machine Firewall confinement is
+available via `scripts/confine-browser.ps1 -Apply`; until applied, do not enable
+browser automation where the browser could reach sensitive internal services.
 
 ### LSP is explicit opt-in and unsandboxed
 
@@ -86,9 +87,11 @@ Only enable LSP with language servers you trust.
 
 This distribution does not auto-install, auto-activate, or catalog community
 plugins. A community plugin enters the distribution only through the
-**reviewed allowlist gate**: a human reviews its source, license, exact
-version, permission surface, and Windows behavior, then pins it to an exact
-version in the allowlist. There is no implemented plugin registry and no
+**reviewed allowlist gate** recorded in
+[`schema/community-plugin-allowlist-v1.json`](schema/community-plugin-allowlist-v1.json):
+a human reviews its source, license, exact version, package integrity,
+permission surface, and Windows behavior, then pins it to an exact version.
+The default allowlist is empty; there is no implemented plugin registry or
 automatic plugin discovery.
 
 ### GitHub integration is read-only

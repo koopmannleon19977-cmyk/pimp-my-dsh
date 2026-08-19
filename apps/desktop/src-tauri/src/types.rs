@@ -68,10 +68,12 @@ pub enum HealthStatus {
     Ok,
     Warning,
     Error,
+    Unavailable,
 }
 
-/// Structured result of `run_doctor`. `ok` is false when the doctor invocation
-/// itself failed; the remaining fields are `None` when unset/unknown.
+/// Structured result of `run_doctor`. `ok` is false when the invocation fails
+/// or a security-relevant sandbox check reports an error; remaining fields are
+/// `None` when unset/unknown.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DoctorResult {
@@ -88,6 +90,7 @@ pub struct DoctorResult {
     pub model_configured: Option<bool>,
     pub lsp_enabled: Option<bool>,
     pub telemetry_enabled: Option<bool>,
+    pub sandbox_checks: Option<Vec<HealthCheck>>,
 }
 
 /// Compatibility surface shown to the renderer. `verified` is true when the
@@ -246,5 +249,28 @@ mod tests {
         assert!(state_allows_open(State::Running));
         assert!(!state_allows_open(State::Stopped));
         assert!(!state_allows_open(State::Stopping));
+    }
+
+    #[test]
+    fn doctor_sandbox_checks_roundtrip() {
+        let json = r#"{
+            "ok": true,
+            "sandboxChecks": [
+                {"id": "sandbox-seatbelt", "status": "ok", "message": "Seatbelt enforced"},
+                {"id": "sandbox-write", "status": "error", "message": "Unrestricted write"},
+                {"id": "read-side-confinement", "status": "unavailable", "message": "Not shipped"}
+            ]
+        }"#;
+        let parsed: DoctorResult = serde_json::from_str(json).unwrap();
+        let checks = parsed.sandbox_checks.expect("sandboxChecks present");
+        assert_eq!(checks.len(), 3);
+        assert_eq!(checks[0].id, "sandbox-seatbelt");
+        assert_eq!(checks[0].status, HealthStatus::Ok);
+        assert_eq!(checks[0].message, "Seatbelt enforced");
+        assert_eq!(checks[1].status, HealthStatus::Error);
+        assert_eq!(checks[2].status, HealthStatus::Unavailable);
+
+        let without: DoctorResult = serde_json::from_str(r#"{"ok": true}"#).unwrap();
+        assert!(without.sandbox_checks.is_none());
     }
 }

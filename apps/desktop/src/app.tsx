@@ -182,7 +182,8 @@ function DoctorPanel({ doctor }: { readonly doctor: DoctorResult | null }): Reac
       <dl className="evidence-list">
         {evidence.map(([label, value]) => value === null ? null : <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
       </dl>
-      {recovery !== null ? <section aria-labelledby="remediation-heading"><Text id="remediation-heading" weight="semibold" block>Recommended recovery</Text><Text className="secondary-text" block>{recovery}</Text></section> : null}
+      {doctor.sandboxChecks?.length ? <section aria-labelledby="sandbox-checks-heading"><Text id="sandbox-checks-heading" weight="semibold" block>Sandbox checks</Text><ul className="health-list">{doctor.sandboxChecks.map((check) => <HealthRow check={check} key={check.id} />)}</ul></section> : null}
+       {recovery !== null ? <section aria-labelledby="remediation-heading"><Text id="remediation-heading" weight="semibold" block>Recommended recovery</Text><Text className="secondary-text" block>{recovery}</Text></section> : null}
     </div>
   );
 }

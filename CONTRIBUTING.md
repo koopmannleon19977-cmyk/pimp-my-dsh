@@ -28,10 +28,11 @@ decision and its reassessment triggers are recorded in
 
 - **Report issues** — bugs, documentation gaps, and Windows-specific problems.
 - **Improve documentation** — the docs in `docs/` and the root `*.md` files.
-- **Propose a community plugin for the reviewed allowlist gate** — see
-  [docs/security-model.md](docs/security-model.md#community-plugins). A plugin
-  is admitted only after a human review of source, license, exact version,
-  permission surface, and Windows behavior, followed by an exact-version pin.
+- **Propose a community plugin for the reviewed allowlist gate** — update
+  [`schema/community-plugin-allowlist-v1.json`](schema/community-plugin-allowlist-v1.json)
+  only after the human review of source, license, exact version, package
+  integrity, permission surface, and Windows behavior described in
+  [docs/security-model.md](docs/security-model.md#community-plugins).
 - **Harden the distribution** — telemetry stays off, web stays off, and the
   Windows sandbox boundary stays honestly disclosed. Changes that weaken these
   guarantees are out of scope.

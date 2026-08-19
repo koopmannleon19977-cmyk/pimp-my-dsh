@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh/schema/community-plugin-allowlist-v1.schema.json",
+  "title": "pimp-my-dsh reviewed community plugin allowlist",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "plugins"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "plugins": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/plugin" }
+    }
+  },
+  "$defs": {
+    "plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "integrity",
+        "source",
+        "license",
+        "permissions",
+        "windows",
+        "reviewedBy",
+        "reviewedAt"
+      ],
+      "properties": {
+        "name": { "type": "string", "pattern": "^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$|^[a-z0-9][a-z0-9._-]*$" },
+        "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$" },
+        "integrity": { "type": "string", "pattern": "^sha512-[A-Za-z0-9+/]+=*$" },
+        "source": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 },
+        "permissions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filesystem", "network", "process"],
+          "properties": {
+            "filesystem": { "enum": ["none", "workspace"] },
+            "network": { "enum": ["none", "public"] },
+            "process": { "enum": ["none", "child"] }
+          }
+        },
+        "windows": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reviewed", "notes"],
+          "properties": {
+            "reviewed": { "const": true },
+            "notes": { "type": "string", "minLength": 1 }
+          }
+        },
+        "reviewedBy": { "type": "string", "minLength": 1 },
+        "reviewedAt": { "type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$" }
+      }
+    }
+  }
+}

@@ -22,7 +22,7 @@ export type LogSource = "supervisor" | "stdout" | "stderr" | "lifecycle" | "doct
 
 export interface HealthCheck {
   readonly id: string;
-  readonly status: "ok" | "warning" | "error";
+  readonly status: "ok" | "warning" | "error" | "unavailable";
   readonly message: string;
 }
 
@@ -50,6 +50,7 @@ export interface DoctorResult {
   readonly modelConfigured: boolean | null;
   readonly lspEnabled: boolean | null;
   readonly telemetryEnabled: boolean | null;
+  readonly sandboxChecks: readonly HealthCheck[] | null;
 }
 
 export interface LogEvent {
