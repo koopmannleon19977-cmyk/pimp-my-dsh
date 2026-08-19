@@ -367,7 +367,7 @@ mod tests {
 
     fn ready(sequence: u64, port: u16) -> String {
         format!(
-            "{{\"protocolVersion\":1,\"type\":\"ready\",\"runId\":\"{RUN}\",\"token\":\"{TOKEN}\",\"sequence\":{sequence},\"profile\":\"web\",\"host\":\"127.0.0.1\",\"port\":{port},\"url\":\"http://127.0.0.1:{port}\",\"distributionVersion\":\"0.1.0\",\"dshVersion\":\"0.1.0-rc.6\"}}"
+            "{{\"protocolVersion\":1,\"type\":\"ready\",\"runId\":\"{RUN}\",\"token\":\"{TOKEN}\",\"sequence\":{sequence},\"profile\":\"web\",\"host\":\"127.0.0.1\",\"port\":{port},\"url\":\"http://127.0.0.1:{port}\",\"distributionVersion\":\"0.1.0\",\"dshVersion\":\"0.1.0-rc.7\"}}"
         )
     }
 

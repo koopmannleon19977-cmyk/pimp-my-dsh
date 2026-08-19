@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "currentPin": "0.1.0-rc.6",
+  "currentPin": "0.1.0-rc.7",
   "monitoring": {
     "cadence": "weekly",
     "intervalDays": 7,

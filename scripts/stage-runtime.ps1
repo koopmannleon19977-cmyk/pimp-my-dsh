@@ -27,7 +27,7 @@ $ManifestName = 'manifest.json'
 # --- Pinned inputs (single source of truth for the compatibility manifest) ---
 $ControllerVersion = '0.1.0'
 $DistributionVersion = '0.1.0'
-$DshVersion = '0.1.0-rc.6'
+$DshVersion = '0.1.0-rc.7'
 $Target = 'x86_64-pc-windows-msvc'
 $NodeVersion = '24.19.0'
 $PnpmVersion = '11.7.0'

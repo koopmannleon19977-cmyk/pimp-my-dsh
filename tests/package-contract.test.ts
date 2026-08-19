@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CORDIS_PATCH, PROFILES_DIR, ROOT, readPackageJson, readText } from "./helpers";
 
-const PIN = "0.1.0-rc.6";
+const PIN = "0.1.0-rc.7";
 
 describe("package.json contract", () => {
   const pkg = readPackageJson();

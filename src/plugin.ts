@@ -855,7 +855,7 @@ export function apply(ctx: Context): void {
   ctx.systemPrompt.context({
     name: 'distribution-version',
     order: -90,
-    text: 'Distribution: pimp-my-dsh 0.1.0; upstream: @deepseek-ai/dsh 0.1.0-rc.6.',
+    text: 'Distribution: pimp-my-dsh 0.1.0; upstream: @deepseek-ai/dsh 0.1.0-rc.7.',
   })
   registerWorktreeSubagent(ctx)
   registerSupervisorBridge(ctx)
