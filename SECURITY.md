@@ -162,6 +162,11 @@ development. Free signing paths for open-source projects (SignPath
 Foundation; Microsoft Azure Trusted Signing free tier) are noted in
 `scripts/release-setup.sh` for when a certificate is chosen.
 
+The release job also creates GitHub Artifact Attestations for the signed
+installer, updater signature, and generated update manifest. Distribution is
+blocked when the attestation step fails. Verification procedure:
+[docs/upstream-pin.md#release-provenance](docs/upstream-pin.md#release-provenance).
+
 ## Secret scanning
 
 This repository relies on GitHub's native secret scanning and push protection,

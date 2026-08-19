@@ -16,9 +16,12 @@ jobs:
   release:
     name: build and publish
     runs-on: windows-latest
-    # `contents: write` is the minimum GitHub requires for `gh release create`.
+    # `contents: write` publishes the release; attestations use GitHub's OIDC
+    # signer and artifact-attestation storage.
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -136,17 +139,36 @@ jobs:
           $manifestPath = 'apps/desktop/src-tauri/target/release/latest.json'
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath -Encoding utf8
 
+          $checksumsPath = 'apps/desktop/src-tauri/target/release/attestation-subjects.sha256'
+          $subjects = @(
+            [ordered]@{ path = $exe.FullName; name = (Join-Path $root $exe.Name) }
+            [ordered]@{ path = $sig.FullName; name = (Join-Path $root $sig.Name) }
+            [ordered]@{ path = (Resolve-Path $manifestPath).Path; name = $manifestPath }
+          )
+          $checksums = $subjects | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.path).Hash.ToLowerInvariant()
+            "$hash  $($_.name -replace '\\', '/')"
+          }
+          $checksums | Set-Content -Path $checksumsPath -Encoding utf8
+
           "EXE_PATH=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "SIG_PATH=$($sig.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "MANIFEST_PATH=$manifestPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CHECKSUMS_PATH=$checksumsPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           Write-Host "Installer : $($exe.Name)"
           Write-Host "Signature : $($sig.Name)"
           Write-Host "Manifest  : latest.json -> $url"
+          Write-Host "Checksums : $checksumsPath"
 
-      # Publish the release. Asset names are preserved verbatim, so the
-      # uploaded .exe name matches the `url` emitted into latest.json, and
-      # GitHub serves it at /releases/latest/download/<name>.
+      # Store GitHub Artifact Attestations for every published subject. The
+      # action is pinned because release workflows must not follow a mutable ref.
+      - name: Attest signed release subjects
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-checksums: apps/desktop/src-tauri/target/release/attestation-subjects.sha256
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create GitHub Release
         shell: pwsh
         env:
@@ -156,6 +178,7 @@ jobs:
             $env:EXE_PATH `
             $env:SIG_PATH `
             $env:MANIFEST_PATH `
+            $env:CHECKSUMS_PATH `
             --repo $env:GITHUB_REPOSITORY `
             --title $env:GITHUB_REF_NAME `
             --target $env:GITHUB_REF_NAME `
@@ -168,3 +191,4 @@ jobs:
           Write-Host "  - $(Split-Path $env:EXE_PATH -Leaf)"
           Write-Host "  - $(Split-Path $env:SIG_PATH -Leaf)"
           Write-Host "  - $(Split-Path $env:MANIFEST_PATH -Leaf)"
+          Write-Host "  - $(Split-Path $env:CHECKSUMS_PATH -Leaf)"

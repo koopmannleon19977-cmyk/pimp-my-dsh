@@ -17,6 +17,24 @@ compatibility-breaking changes. An exact pin makes the composed tree
 reproducible and makes the distribution's patch layer (which targets upstream
 rows by stable id) auditable against a known upstream artifact.
 
+## Release tracking cadence
+
+The machine-readable policy is
+[`schema/upstream-release-policy-v1.json`](../schema/upstream-release-policy-v1.json);
+its schema is
+[`schema/upstream-release-policy-v1.schema.json`](../schema/upstream-release-policy-v1.schema.json).
+
+- **Weekly monitoring:** inspect npm publications for `@deepseek-ai/dsh` and
+  every direct `@deepseek-ai/dsh-*` dependency.
+- **Monthly planned re-pin:** evaluate the newest compatible release through the
+  full upgrade gate below. All direct DSH packages move to one exact pin or the
+  release is rejected.
+- **Immediate security response:** a confirmed upstream security fix bypasses
+  the monthly window, but still requires the same single-pin and contract gates.
+- **Evidence:** update `currentPin` and `lastReviewed` in the policy file in the
+  same change as the dependency and lockfile update.
+
+
 ## The skew: npm rc.6 vs source-master rc.5
 
 There is a known version skew between the published npm artifact and the
@@ -93,6 +111,7 @@ The pin is reassessed when:
 
 ## Upgrade gate
 
+
 A new DSH release is never adopted by changing the dist-tag alone:
 
 1. Change all direct `@deepseek-ai/dsh*` dependencies to the same exact
@@ -108,5 +127,27 @@ A new DSH release is never adopted by changing the dist-tag alone:
 
 Any missing row or public API blocks the release. The old exact pin remains
 supported until the replacement passes the entire gate.
+
+## Release provenance
+
+The release workflow creates GitHub Artifact Attestations for the signed NSIS
+installer, its updater signature, and the generated `latest.json` manifest.
+The workflow grants only the required `id-token: write` and
+`attestations: write` permissions and pins
+`actions/attest-build-provenance` to an immutable commit.
+
+After a release, verify an asset with the GitHub CLI:
+
+```powershell
+gh attestation verify .\path\to\downloaded-release-asset.exe `
+  --repo koopmannleon19977-cmyk/pimp-my-dsh
+```
+
+The release also uploads `attestation-subjects.sha256`, which records the
+SHA-256 subjects attested by the workflow.
+
+Verification must report a valid GitHub attestation for the repository and the
+release workflow. A missing or mismatched attestation blocks distribution even
+when Authenticode and the Tauri updater signature verify.
 
 See [ADR-0001](adr/0001-no-fork.md#reassessment-triggers) for the full list.

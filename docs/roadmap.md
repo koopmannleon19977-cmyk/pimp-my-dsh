@@ -108,8 +108,11 @@ no-fork decision.
 
 **Goal:** make the CLI distribution safe for broader use.
 
-- [ ] Track upstream releases and re-pin on a documented cadence.
-- [ ] Add a signed release artifact and provenance attestation.
+- [x] Track upstream releases and re-pin on a documented cadence
+      (`schema/upstream-release-policy-v1.json`, weekly monitoring, monthly
+      planned re-pin, immediate security response).
+- [x] Add a signed release artifact and provenance attestation (GitHub
+      Artifact Attestations for installer, updater signature, and manifest).
 - [x] Add a migration path for profile patch data across distribution versions.
 - [x] Add Windows-specific integration tests for the sandbox boundaries
       (`tests/cli-contract.test.ts`: NTFS volume, clean-root hardlink behavior,

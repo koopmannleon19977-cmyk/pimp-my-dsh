@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "currentPin": "0.1.0-rc.6",
+  "monitoring": {
+    "cadence": "weekly",
+    "intervalDays": 7,
+    "scope": "all direct @deepseek-ai/dsh packages"
+  },
+  "plannedRepin": {
+    "cadence": "monthly",
+    "intervalDays": 30,
+    "requiresSinglePin": true,
+    "requiredChecks": [
+      "regenerate lockfile",
+      "patch contract",
+      "full contract suite",
+      "Windows headless and web smoke",
+      "approval and sandbox smoke",
+      "isolated-worktree smoke"
+    ]
+  },
+  "securityFixes": {
+    "response": "immediate",
+    "requiresSinglePin": true
+  },
+  "lastReviewed": "2026-08-19"
+}
