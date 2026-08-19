@@ -79,7 +79,8 @@ no-fork decision.
 - [ ] Add read-side confinement on Windows (pair the ACL write boundary with a
       read-side policy or AppContainer capability token). The current upstream
       token has no read restriction; `doctor` reports this as unavailable until
-      a native token/helper is shipped.
+      a native token/helper is shipped. Feasibility and exit criteria:
+      [ADR-0004](adr/0004-windows-read-side-confinement.md).
 - [x] Add a machine-readable community-plugin review checklist artifact that
       the reviewed allowlist gate consumes (`schema/community-plugin-allowlist-v1`).
 - [x] Add `doctor` checks for the Windows sandbox boundaries (volume

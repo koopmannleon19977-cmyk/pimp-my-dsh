@@ -100,9 +100,11 @@ The runner reports `enforcement: 'partial'`. This is deliberate and honest:
 have no ACLs — flagged), hard-link aliases on the workspace/`DSH_HOME`/memory
 file, `Everyone` write grants on the same roots, and an explicit
 `read-side-confinement: unavailable` result because no native read policy or
-AppContainer token is shipped. When browser automation is enabled it also
-reports whether the Firewall confinement rules from
-`scripts/confine-browser.ps1` are active.
+AppContainer token is shipped. The feasibility decision and prototype exit
+criteria are recorded in
+[`ADR-0004`](adr/0004-windows-read-side-confinement.md). When browser
+automation is enabled it also reports whether the Firewall confinement rules
+from `scripts/confine-browser.ps1` are active.
 - **`Everyone` grants remain ambient write authority.** `Everyone` must stay in
   the restricting list for early DLL initialization and CNG to work. An
   external NTFS object whose DACL grants `Everyone` a requested write right

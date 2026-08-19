@@ -43,7 +43,9 @@ The current limitations do not fire a fork trigger:
 
 1. Windows ACL confinement restricts writes but not reads, network, or process
    visibility. Replacing that backend is a sandbox-plugin project; forking the
-   agent loop would not solve it.
+   agent loop would not solve it. The native follow-up and its acceptance
+   matrix are recorded in
+   [ADR-0004](0004-windows-read-side-confinement.md).
 2. Browser network egress is not confined. Browser automation therefore stays
    opt-in and approval-gated instead of being enabled by default.
 3. The API proxy explicitly has no protocol-version field because its client
