@@ -36,6 +36,7 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_Security",
     "Win32_Security_Authentication_Identity",
     "Win32_Security_Authorization",
+    "Win32_Security_Isolation",
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
     "Win32_System_JobObjects",
@@ -62,6 +63,9 @@ path = "tests/fixtures/child.rs"
 [[bin]]
 name = "fixture-grandchild"
 path = "tests/fixtures/grandchild.rs"
+[[bin]]
+name = "fixture-confined-child"
+path = "tests/fixtures/confined_child.rs"
 [dev-dependencies]
 serde_json = "=1.0.151"
 sha2 = "=0.11.0"
@@ -76,4 +80,6 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_Networking_WinSock",
     "Win32_System_IO",
     "Win32_System_Threading",
+    "Win32_Security_Isolation",
+    "Win32_Storage_FileSystem",
 ] }

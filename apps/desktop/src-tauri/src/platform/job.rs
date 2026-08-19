@@ -8,6 +8,7 @@ mod imp {
     use windows_sys::Win32::Foundation::{
         CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
+    use windows_sys::Win32::Security::SECURITY_CAPABILITIES;
     use windows_sys::Win32::Storage::FileSystem::ReadFile;
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -18,10 +19,13 @@ mod imp {
     use windows_sys::Win32::System::Threading::{
         CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
         DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
-        InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
-        ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
+        InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+        PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, ResumeThread,
+        STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
         UpdateProcThreadAttribute, WaitForSingleObject,
     };
+
+    use super::super::confinement::Confinement;
 
     use crate::compatibility::LaunchSpec;
 
@@ -215,6 +219,18 @@ mod imp {
         /// explicit environment, a fixed argv, and an explicit inherited-handle
         /// allowlist (stdio only). The primary thread stays suspended.
         pub fn create_suspended(&self, app: &LaunchSpec) -> io::Result<Child> {
+            self.create_suspended_with(app, None)
+        }
+
+        /// Like [`Job::create_suspended`] but additionally attaches
+        /// `confinement` (an AppContainer identity) via
+        /// `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`, so the spawned
+        /// process runs under the AppContainer's restricted, read-side ACL.
+        pub fn create_suspended_with(
+            &self,
+            app: &LaunchSpec,
+            confinement: Option<&Confinement>,
+        ) -> io::Result<Child> {
             // 1. stdio pipes (all inheritable; the handle list selects the child ends).
             let (stdin_read, stdin_write) = super::super::winutil::create_pipe()?;
             let (stdout_read, stdout_write) = super::super::winutil::create_pipe()?;
@@ -228,7 +244,8 @@ mod imp {
                 SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT, 0);
             }
 
-            // 2. STARTUPINFOEX with an explicit handle list.
+            // 2. STARTUPINFOEX with an explicit handle list (plus optional
+            //    AppContainer security capabilities).
             let mut si: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
             si.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
             si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -237,17 +254,23 @@ mod imp {
             si.StartupInfo.hStdError = stderr_write;
 
             let handle_list = [stdin_read, stdout_write, stderr_write];
+            let attr_count = if confinement.is_some() { 2 } else { 1 };
 
             let mut attr_size: usize = 0;
             // SAFETY: first call with null list returns the required size.
             unsafe {
-                InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_size);
+                InitializeProcThreadAttributeList(
+                    std::ptr::null_mut(),
+                    attr_count,
+                    0,
+                    &mut attr_size,
+                );
             }
             let mut attr_buf: Vec<u8> = vec![0; attr_size];
             si.lpAttributeList = attr_buf.as_mut_ptr() as *mut core::ffi::c_void;
-            // SAFETY: attr list buffer is `attr_size` bytes; 1 attribute.
+            // SAFETY: attr list buffer is `attr_size` bytes; `attr_count` attributes.
             let ok = unsafe {
-                InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &mut attr_size)
+                InitializeProcThreadAttributeList(si.lpAttributeList, attr_count, 0, &mut attr_size)
             };
             if ok == 0 {
                 let e = io::Error::last_os_error();
@@ -286,6 +309,39 @@ mod imp {
                     stderr_write,
                 ]);
                 return Err(e);
+            }
+
+            // 2b. Attach the AppContainer security capabilities alongside the
+            // handle list when confinement is requested.
+            if let Some(conf) = confinement {
+                // SAFETY: attribute list valid; pointer + size describe the
+                // SECURITY_CAPABILITIES owned by `conf`, which outlives this
+                // call (CreateProcessW copies the struct during the call).
+                let ok = unsafe {
+                    UpdateProcThreadAttribute(
+                        si.lpAttributeList,
+                        0,
+                        PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
+                        conf.security_capabilities_ptr() as *const core::ffi::c_void,
+                        std::mem::size_of::<SECURITY_CAPABILITIES>(),
+                        std::ptr::null_mut(),
+                        std::ptr::null(),
+                    )
+                };
+                if ok == 0 {
+                    let e = io::Error::last_os_error();
+                    // SAFETY: attribute list valid.
+                    unsafe { DeleteProcThreadAttributeList(si.lpAttributeList) };
+                    close_many(&[
+                        stdin_read,
+                        stdin_write,
+                        stdout_read,
+                        stdout_write,
+                        stderr_read,
+                        stderr_write,
+                    ]);
+                    return Err(e);
+                }
             }
 
             // 3. Environment block + command line.
@@ -448,6 +504,7 @@ mod imp {
     use std::io;
     use std::time::Duration;
 
+    use super::confinement::Confinement;
     use crate::compatibility::LaunchSpec;
 
     /// Portable stub (non-Windows: pure-contract compile-test only).
@@ -514,6 +571,13 @@ mod imp {
             Err(unsupported())
         }
         pub fn create_suspended(&self, _app: &LaunchSpec) -> io::Result<Child> {
+            Err(unsupported())
+        }
+        pub fn create_suspended_with(
+            &self,
+            _app: &LaunchSpec,
+            _confinement: Option<&Confinement>,
+        ) -> io::Result<Child> {
             Err(unsupported())
         }
         pub fn assign(&self, _child: &Child) -> io::Result<()> {

@@ -22,6 +22,9 @@ pub mod job {
 pub mod pipe {
     pub use crate::platform::pipe::*;
 }
+pub mod confinement {
+    pub use crate::platform::confinement::*;
+}
 pub mod provider {
     pub use crate::compatibility::*;
 }

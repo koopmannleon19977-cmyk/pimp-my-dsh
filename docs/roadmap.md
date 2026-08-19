@@ -76,11 +76,14 @@ no-fork decision.
       block rules for loopback/RFC1918/link-local/multicast on the pinned
       Playwright Chromium). Per-machine elevated step; enabling automation by
       default stays gated on that step per machine.
-- [ ] Add read-side confinement on Windows (pair the ACL write boundary with a
-      read-side policy or AppContainer capability token). The current upstream
+- [ ] Add production read-side confinement on Windows. The current upstream
       token has no read restriction; `doctor` reports this as unavailable until
-      a native token/helper is shipped. Feasibility and exit criteria:
-      [ADR-0004](adr/0004-windows-read-side-confinement.md).
+      the real Node payload, DSH home, workspace, temporary directories, hard
+      links, junctions, crashes, and descendants are covered.
+  - [x] Native opt-in AppContainer prototype: per-run profile root, staged
+        fixture/payload, `SECURITY_CAPABILITIES` before resume, outside-read
+        denial, Job/handle-list path, normal and failed-startup cleanup
+        (`tests/confinement_contract_test.rs`; ADR-0004).
 - [x] Add a machine-readable community-plugin review checklist artifact that
       the reviewed allowlist gate consumes (`schema/community-plugin-allowlist-v1`).
 - [x] Add `doctor` checks for the Windows sandbox boundaries (volume

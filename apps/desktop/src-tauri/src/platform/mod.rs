@@ -6,5 +6,6 @@
 pub(crate) mod winutil;
 
 pub mod browser;
+pub mod confinement;
 pub mod job;
 pub mod pipe;

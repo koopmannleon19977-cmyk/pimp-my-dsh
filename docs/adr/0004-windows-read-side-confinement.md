@@ -1,6 +1,6 @@
 # ADR-0004: Keep Windows read-side confinement as a native follow-up
 
-- **Status:** Deferred — native implementation required
+- **Status:** Prototype complete — production integration deferred
 - **Date:** 2026-08-19
 - **Deciders:** `pimp-my-dsh` maintainers
 
@@ -32,32 +32,39 @@ than the current partial sandbox.
 Do not ship a fake read-only mode or silently mutate broad host ACLs. Keep the
 current write-only enforcement and make the missing capability explicit:
 
-- `doctor` reports `read-side-confinement` as `unavailable`.
-- The roadmap item remains open until a native child-launch path exists.
+- `doctor` continues to report `read-side-confinement` as `unavailable`.
+- The production roadmap item remains open until the native path covers the
+  real Node payload, managed profile, harness home, workspace, and private
+  temporary directory.
 - Tool approval hooks and path checks may remain defense-in-depth, but they are
   not counted as OS read confinement.
-- The desktop and CLI paths must fail closed if a future native token cannot be
+- A native child launch must fail closed if its AppContainer identity cannot be
   created, configured, or attached before the child resumes.
 
-## Smallest acceptable native prototype
+## Completed native prototype
 
-A future prototype is complete only when it demonstrates all of these on a
-supported Windows target:
+`platform::confinement::Confinement` now creates a unique, unprivileged
+AppContainer profile per run. The profile-owned directory is the only staging
+root for the fixture executable and readable payload; the implementation never
+rewrites a caller profile, workspace, `%TEMP%`, or volume-root DACL.
 
-1. Creates a per-run AppContainer/restricted token without elevation.
-2. Attaches `SECURITY_CAPABILITIES` before `ResumeThread`.
-3. Grants read access only to an explicit temporary fixture root and the
-   minimum runtime payload needed by the child.
-4. Proves that a caller-readable file outside that root cannot be opened.
-5. Preserves the existing Job Object and inherited-handle invariants.
-6. Removes temporary ACL grants on normal and failed startup paths, and reports
-   cleanup failure instead of falling back to an unrestricted child.
-7. Runs as an opt-in prototype before it becomes the default launcher path.
+`Job::create_suspended_with` adds
+`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` beside the existing explicit
+stdio handle list before `CreateProcessW`. It retains the suspended
+create → Job assignment → `ResumeThread` ordering. The existing
+`create_suspended` remains the production default, so the prototype is opt-in.
 
-The prototype must not use the user's whole profile or drive as its read root,
-and it must not claim production confinement until the same matrix covers the
-real Node payload, DSH home, workspace, temp directory, hard links, junctions,
-crashes, and descendant processes.
+`tests/confinement_contract_test.rs` executes the prototype on Windows:
+
+1. a unique AppContainer profile is created without elevation;
+2. the staged child reads a fixture file in its private profile root;
+3. that same child is denied a caller-readable file outside the root;
+4. normal cleanup removes the private root and deletes the profile;
+5. a missing staged child fails before resume and its profile is removed.
+
+This satisfies the prototype boundary without claiming production confinement.
+It does not yet stage and grant the real Node payload, DSH home, workspace,
+temp directory, hard links, junctions, crashes, or descendant processes.
 
 ## Consequences
 
