@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, linkSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { hostname, userInfo } from "node:os";
@@ -329,6 +330,31 @@ describe("CLI contract (built dist)", () => {
       const hardLinks = checks.find((check) => check.id === "hard-link-aliases");
       expect(hardLinks).toMatchObject({ status: "error" });
       expect(hardLinks?.message).toContain(memory);
+    });
+
+    it.runIf(process.platform === "win32")("detects Everyone write grants on the memory file when ACL probing is available", () => {
+      const home = makeTempDir();
+      const memoryDirectory = join(home, "pimp-my-dsh");
+      const memory = join(memoryDirectory, "memory.jsonl");
+      mkdirSync(memoryDirectory, { recursive: true });
+      writeFileSync(memory, "{\"text\":\"acl probe\"}\n");
+      try {
+        execFileSync("icacls", [memory, "/grant", "*S-1-1-0:(M)"], { encoding: "utf8" });
+        const r = runCli(["doctor", "--json"], { DSH_HOME: home, PIMP_DSH_ENABLE_BROWSER: "0" });
+        expect(r.status).toBe(0);
+        const checks = JSON.parse(r.stdout).sandboxChecks as Array<{ id: string; status: string; message: string }>;
+        const everyone = checks.find((check) => check.id === "everyone-grants");
+        expect(everyone).toBeDefined();
+        if (everyone?.status === "warning") {
+          expect(everyone.message).toMatch(/Get-Acl|PowerShell|module/i);
+          return;
+        }
+        expect(everyone).toMatchObject({ status: "error" });
+        expect(everyone?.message).toContain(memory);
+        expect(everyone?.message).toContain("Everyone");
+      } finally {
+        execFileSync("icacls", [memory, "/remove", "*S-1-1-0"], { encoding: "utf8" });
+      }
     });
 
     it.runIf(process.platform !== "win32")("reports no sandbox checks off Windows", () => {

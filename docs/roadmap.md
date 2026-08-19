@@ -111,7 +111,11 @@ no-fork decision.
 - [ ] Track upstream releases and re-pin on a documented cadence.
 - [ ] Add a signed release artifact and provenance attestation.
 - [x] Add a migration path for profile patch data across distribution versions.
-- [ ] Add Windows-specific integration tests for the sandbox boundaries.
+- [x] Add Windows-specific integration tests for the sandbox boundaries
+      (`tests/cli-contract.test.ts`: NTFS volume, clean-root hardlink behavior,
+      default-home memory hardlinks, and an actual `Everyone:Modify` ACL grant
+      when the host's `Get-Acl` probe is available; unavailable probes are
+      reported as warnings rather than hidden).
 - [ ] Publish a plugin-authoring guide for the reviewed allowlist gate.
 
 ## Phase 2 — Distribution & trust (desktop)
