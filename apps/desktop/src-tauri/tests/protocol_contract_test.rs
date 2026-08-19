@@ -37,7 +37,7 @@ fn hello(sequence: u64, run: &str, token: &str) -> String {
 
 fn ready(sequence: u64, host: &str, port: u16, url: &str) -> String {
     format!(
-        r#"{{"protocolVersion":1,"type":"ready","runId":"{RUN}","token":"{TOKEN}","sequence":{sequence},"profile":"web","host":"{host}","port":{port},"url":"{url}","distributionVersion":"0.1.0","dshVersion":"0.1.0-rc.6"}}"#
+        r#"{{"protocolVersion":1,"type":"ready","runId":"{RUN}","token":"{TOKEN}","sequence":{sequence},"profile":"web","host":"{host}","port":{port},"url":"{url}","distributionVersion":"0.1.0","dshVersion":"0.1.0-rc.7"}}"#
     )
 }
 
@@ -84,7 +84,7 @@ fn accepts_hello_then_ready_in_strict_sequence() {
             assert_eq!(port, 49152);
             assert_eq!(url, "http://127.0.0.1:49152");
             assert_eq!(distribution_version, "0.1.0");
-            assert_eq!(dsh_version, "0.1.0-rc.6");
+            assert_eq!(dsh_version, "0.1.0-rc.7");
             assert_eq!(profile, "web");
         }
         other => panic!("expected Ready frame, got {other:?}"),

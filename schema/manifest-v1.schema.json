@@ -8,7 +8,7 @@
   "properties": {
     "schemaVersion": { "const": 1 },
     "bundleVersion": { "const": "0.1.0" },
-    "upstreamVersion": { "const": "0.1.0-rc.6" },
+    "upstreamVersion": { "const": "0.1.0-rc.7" },
     "profile": {
       "enum": ["coding", "safe", "research", "windows", "headless", "personal", "experimental", "web"]
     }

@@ -15,7 +15,7 @@ export const MAX_FRAME_BYTES = 64 * 1024
 export const SEQUENCE_BASE = 1
 
 const DISTRIBUTION_VERSION = '0.1.0'
-const DSH_VERSION = '0.1.0-rc.6'
+const DSH_VERSION = '0.1.0-rc.7'
 const LENGTH_PREFIX_BYTES = 4
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/
 const CONNECT_TIMEOUT_MS = 5_000

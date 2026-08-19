@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// Exact compatibility constants (shared with the manifest + protocol modules).
 pub const CONTROLLER_VERSION: &str = "0.1.0";
 pub const DISTRIBUTION_VERSION: &str = "0.1.0";
-pub const DSH_VERSION: &str = "0.1.0-rc.6";
+pub const DSH_VERSION: &str = "0.1.0-rc.7";
 pub const NODE_VERSION: &str = "24.19.0";
 pub const PNPM_VERSION: &str = "11.7.0";
 pub const TARGET: &str = "x86_64-pc-windows-msvc";

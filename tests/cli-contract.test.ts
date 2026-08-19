@@ -30,10 +30,10 @@ describe("CLI contract (built dist)", () => {
       expect(manifest.packageManager).toBe("pnpm@11.7.0");
       expect(manifest.dependencies).toEqual({
         "pimp-my-dsh": expect.stringMatching(/^link:/),
-        "@deepseek-ai/dsh-lsp": "0.1.0-rc.6",
-        "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.6",
-        "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.6",
-        "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+        "@deepseek-ai/dsh-lsp": "0.1.0-rc.7",
+        "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.7",
+        "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.7",
+        "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.7",
         "@playwright/mcp": "0.0.79",
       });
       expect(manifest.dsh.profile.bundles).toEqual([
@@ -45,7 +45,7 @@ describe("CLI contract (built dist)", () => {
       expect(marker).toEqual({
         schemaVersion: 1,
         bundleVersion: "0.1.0",
-        upstreamVersion: "0.1.0-rc.6",
+        upstreamVersion: "0.1.0-rc.7",
         profile: "web",
       });
     });
@@ -203,10 +203,10 @@ describe("CLI contract (built dist)", () => {
       const replaced = JSON.parse(readFileSync(manifestPath, "utf8"));
       expect(replaced.dependencies).toEqual({
         "pimp-my-dsh": expect.stringMatching(/^link:/),
-        "@deepseek-ai/dsh-lsp": "0.1.0-rc.6",
-        "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.6",
-        "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.6",
-        "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+        "@deepseek-ai/dsh-lsp": "0.1.0-rc.7",
+        "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.7",
+        "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.7",
+        "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.7",
         "@playwright/mcp": "0.0.79",
       });
       expect(replaced.dsh.profile.bundles).toEqual([

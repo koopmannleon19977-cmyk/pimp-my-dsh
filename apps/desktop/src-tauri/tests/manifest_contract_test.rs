@@ -72,7 +72,7 @@ fn build_tree(dir: &Path) -> String {
         "node": { "version": "24.19.0", "sha256": sha256_hex(node_bytes) },
         "pnpmVersion": "11.7.0",
         "distributionVersion": "0.1.0",
-        "dshVersion": "0.1.0-rc.6",
+        "dshVersion": "0.1.0-rc.7",
         "target": "x86_64-pc-windows-msvc",
         "payloadSha256": payload_sha256(dir),
     })

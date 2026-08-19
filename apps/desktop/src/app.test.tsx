@@ -25,7 +25,7 @@ function createSnapshot(state: LifecycleState = "stopped", overrides: Partial<Sn
       { runId: "run-1", revision: 1, sequence: 2, timestamp: "2026-08-16T08:01:00.000Z", source: "stderr", level: "error", message: "Example failure" },
     ],
     settings: { theme: "system", fixedPort: null, restartPolicy: "never", notificationsEnabled: false },
-    compatibility: { controllerVersion: "0.1.0", distributionVersion: "0.1.0", nodeVersion: "24.19.0", pnpmVersion: "11.7.0", dshVersion: "0.1.0-rc.6", target: "x86_64-pc-windows-msvc", verified: true },
+    compatibility: { controllerVersion: "0.1.0", distributionVersion: "0.1.0", nodeVersion: "24.19.0", pnpmVersion: "11.7.0", dshVersion: "0.1.0-rc.7", target: "x86_64-pc-windows-msvc", verified: true },
     loggingFault: null,
     ...overrides,
   };
