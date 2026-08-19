@@ -150,4 +150,19 @@ Verification must report a valid GitHub attestation for the repository and the
 release workflow. A missing or mismatched attestation blocks distribution even
 when Authenticode and the Tauri updater signature verify.
 
+## External release prerequisites
+
+The repository can preflight metadata locally, but publication still depends on
+external credentials and services:
+
+- Authenticode certificate secrets (`CERT_PFX_BASE64` and
+  `CERT_PFX_PASSWORD`);
+- Tauri updater signing key and password;
+- GitHub OIDC and Artifact Attestation availability for the repository;
+- authenticated `gh` release permissions.
+
+`scripts/release-preflight.mjs` deliberately does not inspect or print any of
+these secrets. The release workflow fails closed when a required signing secret
+or attestation permission is missing.
+
 See [ADR-0001](adr/0001-no-fork.md#reassessment-triggers) for the full list.

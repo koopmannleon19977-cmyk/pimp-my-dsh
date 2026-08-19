@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ROOT, readPackageJson, readText } from "./helpers";
 
 const workflow = readText(join(ROOT, ".github", "workflows", "release.yml"));
+const monitorWorkflow = readText(join(ROOT, ".github", "workflows", "upstream-monitor.yml"));
 const pinPolicy = JSON.parse(
   readFileSync(join(ROOT, "schema", "upstream-release-policy-v1.json"), "utf8"),
 ) as {
@@ -40,6 +41,13 @@ describe("release metadata contract", () => {
     expect(workflow).toContain("attestation-subjects.sha256");
     expect(workflow).toContain("$env:SIG_PATH");
     expect(workflow).toContain("$env:CHECKSUMS_PATH");
+  });
+
+  it("runs the upstream monitor weekly and invokes the local preflight", () => {
+    expect(monitorWorkflow).toContain("cron: '30 9 * * 1'");
+    expect(monitorWorkflow).toContain("node scripts/check-upstream-pin.mjs");
+    expect(workflow).toContain("node scripts/release-preflight.mjs $env:GITHUB_REF_NAME");
+    expect(readText(join(ROOT, "scripts", "release-preflight.mjs"))).toContain("signing");
   });
 
   it("documents the same cadence and verification path", () => {

@@ -59,6 +59,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify release metadata before build
+        shell: pwsh
+        run: node scripts/release-preflight.mjs $env:GITHUB_REF_NAME
+
       - name: Stage runtime payload
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stage-runtime.ps1
 
