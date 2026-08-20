@@ -37,6 +37,16 @@ version, or `sha512` value must never be copied into the allowlist. Every
 non-empty entry needs a real published artifact and evidence recorded during
 review.
 
+## Public review workflow
+
+Use a public pull request or a linked permanent review record for every
+addition, replacement, and removal. Name the exact candidate and the reason
+for proposing it, retain or link all evidence listed below, and record the
+decision. The proposal author must not be the only approver: an independent
+reviewer must inspect the evidence and approve every addition or replacement
+before merge. Any missing evidence, mismatch, or unresolved risk rejects the
+candidate.
+
 ## Review checklist
 
 Complete every item before adding an entry.
@@ -122,13 +132,15 @@ known limitations in `windows.notes`.
 
 ### 5. Record independent review evidence
 
-`reviewedBy` identifies the person or team that performed the review.
-`reviewedAt` is an ISO-8601 timestamp with a timezone, for example
-`2026-08-19T12:34:56Z`. Use the real review time; do not copy this example into
-an entry.
+`reviewedBy` names the reviewer or team responsible for the allowlist
+decision. Record every reviewer and approver in the public review record; the
+proposal author must not be the only approver. `reviewedAt` is the actual
+approval time as an ISO-8601 timestamp with a timezone, for example
+`2026-08-19T12:34:56Z`. Do not copy this example into an entry.
 
-The review record should retain:
+The public review record must retain:
 
+- the proposal author and each reviewer or approver;
 - the exact registry lookup output;
 - the artifact filename and checksum;
 - source commit or release tag;
@@ -148,19 +160,31 @@ Only after the checklist is complete:
 3. Keep the entry's package name out of the built-in distribution dependency and
    bundle names. The runtime rejects collisions, duplicates, malformed names,
    non-exact versions, missing Windows review, and broad permissions.
-4. Run the package contract and CLI contract suites:
+4. Verify the edited allowlist against npm:
+
+   ```powershell
+   pnpm community-plugin:verify
+   ```
+
+   For every entry, this command requires the exact published version and
+   requires the declared `integrity` and `license` to match npm's
+   `dist.integrity` and license metadata. Registry errors, missing metadata,
+   and mismatches fail closed. An empty allowlist passes without making a
+   registry request. This verifies published metadata only; it does not replace
+   the source, permission, or Windows review above.
+5. Run the package contract and CLI contract suites:
 
    ```powershell
    pnpm test
    ```
 
-5. Install an isolated profile under a temporary `DSH_HOME` and inspect the
+6. Install an isolated profile under a temporary `DSH_HOME` and inspect the
    generated `package.json` and DSH bundle list. Confirm that the exact reviewed
    version appears once and no extra dependency or bundle survives.
-6. Run the Windows smoke path for the profile, then review `doctor --json` and
+7. Run the Windows smoke path for the profile, then review `doctor --json` and
    the resulting logs for secrets, unexpected network activity, and cleanup
    failures.
-7. Have a second reviewer approve the diff before merging.
+8. Have the independent reviewer approve the evidence and diff before merging.
 
 A changed allowlist is a distribution change. It is not a user preference and
 must not be edited by a plugin or by a running harness session.
@@ -168,17 +192,27 @@ must not be edited by a plugin or by a running harness session.
 ## Removal and re-review
 
 Remove an entry when its source is compromised, its release is withdrawn, its
-license changes, a dependency gains authority, or its Windows behavior changes.
+license changes, a dependency gains authority, its Windows behavior changes,
+or the published metadata no longer matches the pin. Do not leave a known-bad
+entry admitted while a replacement is reviewed.
+
 Re-review and repin when:
 
 - the exact package version changes;
 - the package integrity changes;
+- the declared or published license changes;
 - a transitive dependency changes materially;
 - the upstream source or release process changes;
 - a new Windows or Node major version becomes supported.
 
-Use a new exact entry for the new artifact. Do not widen an old entry to absorb
-an upgrade.
+Treat a replacement as a new admission: repeat the full checklist, run
+`pnpm community-plugin:verify`, and obtain independent approval. Do not widen
+an old entry or reuse its evidence to absorb an upgrade.
+
+For removal, state the trigger and affected exact version in the public review
+record, delete the entry, and run `pnpm community-plugin:verify` on the
+result. Removing the last entry restores the intentional, valid empty
+allowlist.
 
 ## What this gate does not provide
 

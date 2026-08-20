@@ -157,10 +157,14 @@ no-fork decision.
 
 **Goal:** grow a reviewed, safe plugin ecosystem.
 
-- [ ] Maintain a reviewed allowlist of community plugins with exact-version
-      pins.
-- [ ] Add tooling to verify allowlist pins against published artifacts.
-- [ ] Document the review process publicly.
+- [x] Establish the reviewed community-plugin allowlist as a maintained
+      exact-version admission gate. It is intentionally empty until a plugin
+      completes public review; an empty list is valid.
+- [x] Add `pnpm community-plugin:verify` to check every pin against the exact
+      npm-published version, `dist.integrity`, and declared license; the empty
+      allowlist performs no registry requests.
+- [x] Document the public proposal, evidence, independent approval, re-review,
+      replacement, and removal process (`docs/plugin-authoring.md`).
 - [x] Approval-gated GitHub write tooling (`pimp_github_write`: PR, issue,
       comment; every call asks; push deferred) — added beyond the original
       phase scope.
