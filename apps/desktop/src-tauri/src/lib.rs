@@ -25,6 +25,9 @@ pub mod pipe {
 pub mod confinement {
     pub use crate::platform::confinement::*;
 }
+pub mod web_proxy {
+    pub use crate::platform::web_proxy::*;
+}
 pub mod provider {
     pub use crate::compatibility::*;
 }
@@ -137,8 +140,7 @@ mod desktop_app {
     }
 
     fn open_harness_window(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
-        let url =
-            tauri::Url::parse(url).map_err(|e| format!("invalid endpoint: {e}"))?;
+        let url = tauri::Url::parse(url).map_err(|e| format!("invalid endpoint: {e}"))?;
         let window = app
             .get_webview_window("harness")
             .ok_or_else(|| "harness window not found".to_string())?;
@@ -317,7 +319,9 @@ mod desktop_app {
         let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
         let menu = Menu::with_items(
             app,
-            &[&show, &start, &stop, &open, &doctor, &autostart, &reveal, &quit],
+            &[
+                &show, &start, &stop, &open, &doctor, &autostart, &reveal, &quit,
+            ],
         )?;
 
         let icon = app

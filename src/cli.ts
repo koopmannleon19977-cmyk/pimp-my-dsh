@@ -375,6 +375,7 @@ function harnessEnvironment(): Environment {
     if (value !== undefined) environment[protectedName] = value
     delete environment[publicName]
   }
+  environment.DSH_PIMP_DSH_CHILD = '1'
   environment.DSH_PIMP_BROWSER_CLI = playwrightMcpCli
   environment.DSH_TELEMETRY_DISABLED = '1'
   delete environment.DSH_TELEMETRY_MODE
@@ -744,7 +745,7 @@ function readSideConfinementCheck(): SandboxCheck {
   return {
     id: 'read-side-confinement',
     status: 'unavailable',
-    message: 'unavailable: the upstream Windows WRITE_RESTRICTED token limits writes only; a native read policy or AppContainer token is not shipped',
+    message: 'unavailable for direct CLI runs: packaged desktop-supervised web runs use a zero-capability AppContainer; standalone CLI runs retain the upstream write-only token',
   }
 }
 

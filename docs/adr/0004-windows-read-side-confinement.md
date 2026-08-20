@@ -1,98 +1,107 @@
-# ADR-0004: Keep Windows read-side confinement as a native follow-up
+# ADR-0004: Confine packaged desktop web runs with AppContainer
 
-- **Status:** Production no-go — zero-capability loopback transport blocked
-- **Date:** 2026-08-19
+- **Status:** Accepted for packaged desktop-supervised web runs
+- **Date:** 2026-08-20
 - **Deciders:** `pimp-my-dsh` maintainers
 
 ## Context
 
-The pinned upstream Windows backend (`@deepseek-ai/dsh-sandbox-windows-acl`)
-creates a `WRITE_RESTRICTED` token. Its restricting SIDs participate in write
-access checks only. A confined child can still read every file available to the
-caller and can open sockets.
+Direct `pimp-dsh run` uses the pinned upstream Windows backend
+(`@deepseek-ai/dsh-sandbox-windows-acl`). Its `WRITE_RESTRICTED` token
+intersects write access only: the child can still read caller-readable files,
+open sockets, and inspect processes. The direct CLI does not use the native
+desktop launcher and remains intentionally outside this decision.
 
-The existing desktop launcher already owns the correct process boundary:
-`CreateProcessW` with `CREATE_SUSPENDED`, an explicit handle-list attribute, an
+The packaged desktop supervisor owns a stronger native process boundary:
+`CreateProcessW` with `CREATE_SUSPENDED`,
+`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`, an explicit handle list, an
 unnamed kill-on-close Job Object, assignment before resume, and a fixed
-absolute Node executable. The CLI distribution does not share this native
-launcher; it runs through the upstream Node sandbox seam.
+absolute Node executable. This makes a unique zero-capability AppContainer
+practical without changing broad host ACLs.
 
-A real read boundary therefore needs more than a tool or plugin policy. The
-candidate Windows mechanism is an AppContainer or restricted token attached to
-the child through `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`. The child
-would also need explicit read grants for every legitimate root: the runtime,
-managed profile, harness home, workspace, and private temporary directory.
-Those grants must be safe for arbitrary user paths, reversible, race-resistant,
-and compatible with pnpm hard links. AppContainer access to arbitrary paths is
-not implicit, and broad host DACL rewrites would be a worse security boundary
-than the current partial sandbox.
+The first complete rc.7 prototype authenticated its control pipe and reached
+`ready`, but the confined child advertised its own loopback listener. The host
+could not reach that listener (`WSAECONNREFUSED`, OS error 10061). That result
+is retained as historical evidence: broad network capability SIDs and
+machine-wide loopback exemptions would weaken the intended zero-network
+boundary, so they remain rejected.
 
 ## Decision
 
-Do not ship a fake read-only mode or silently mutate broad host ACLs. Keep the
-current write-only enforcement and make the missing capability explicit:
+Ship native read-side confinement for packaged Windows desktop-supervised web
+runs only:
 
-- `doctor` continues to report `read-side-confinement` as `unavailable`.
-- No desktop opt-in setting is shipped: the authenticated private run reaches
-  `ready`, but its loopback endpoint is unreachable from the supervisor.
-- Tool approval hooks and path checks remain defense-in-depth; they are not
-  counted as OS read confinement.
-- A native child launch must fail closed if its AppContainer identity, private
-  staging, authenticated pipe, or endpoint cannot be established.
+1. Create a unique, unprivileged AppContainer profile with zero capability
+   SIDs for each run. Stage the authenticated runtime and managed rc.7 web
+   profile inside its private root without rewriting the caller profile,
+   workspace, `%TEMP%`, or volume-root DACL. The web profile disables
+   credential/settings and user-patch HMR watchers, precreates an empty
+   `.credentials.yaml` and AppContainer-virtualized Temp path, and exposes the
+   authenticated runtime's native-module closure through per-package private
+   symlinks.
+2. Launch the staged child suspended, assign it to the Job, and only then
+   resume it. The bridge and every web data pipe are created by the host with a
+   DACL for SYSTEM, the current user, and that exact per-run AppContainer SID;
+   remote pipe clients are rejected.
+3. Import the pinned `confined-web-transport.js` Node preload from the verified
+   staged runtime. It replaces the expected `127.0.0.1:<proxy-port>` listen
+   with a `\\.\pipe\LOCAL\pimp-dsh-anchor-…` lifecycle anchor. A process-global
+   acceptor also covers the duplicate-module instance used by the rc.7 child.
+   For each browser connection, the host creates a fresh exact-SID data pipe
+   and random connection token, then sends both in an authenticated, strictly
+   sequenced `web-accept` control frame. After connecting, the child writes that
+   control-delivered token; the host verifies it in constant time before
+   forwarding any browser cookie, request, or body. First-instance creation
+   prevents a pre-created server, and the token proof rejects a racing allowed
+   client.
+4. Keep TCP loopback in the trusted host proxy, not in the zero-capability
+   child. The child reports the public host-proxy base URL, while only the
+   desktop navigation path receives the private bootstrap URL. The bootstrap
+   responds with an `HttpOnly`, host-only, `SameSite=Strict` cookie,
+   `Cache-Control: no-store`, and `Referrer-Policy: no-referrer`; all other
+   requests require that cookie. After authentication, the proxy tunnels raw
+   bytes so HTTP, SSE, and WebSocket behavior is preserved without protocol
+   translation.
+5. Fail closed across profile/runtime staging, AppContainer creation, boot,
+   control/data-pipe authentication, proxy startup, and teardown. A failure
+   never falls back to an unconfined desktop child; the Job is reaped and
+   confinement cleanup is attempted on every exit path.
 
-## Completed native prototype
+Tool approvals and path checks remain defense-in-depth and are not counted as
+OS read confinement. The AppContainer boundary also does not promise denial of
+every ambient host object: files or other objects deliberately readable by
+all application packages or otherwise world-readable may remain visible.
 
-`platform::confinement::Confinement` now creates a unique, unprivileged
-AppContainer profile per run. The profile-owned directory is the only staging
-root for the fixture executable and readable payload; the implementation never
-rewrites a caller profile, workspace, `%TEMP%`, or volume-root DACL.
+## Production gate
 
-`Job::create_suspended_with` adds
-`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` beside the existing explicit
-stdio handle list before `CreateProcessW`. It retains the suspended
-create → Job assignment → `ResumeThread` ordering. The existing
-`create_suspended` remains the production default, so the prototype is opt-in.
+Two ignored local gates cover different seams:
 
-The Windows contract matrix now covers:
+- `private_real_web_run_serves_through_authenticated_host_pipe_proxy` in
+  `apps/desktop/src-tauri/tests/full_run_confinement_contract_test.rs` exercises
+  the real Node 24.19.0 / DSH 0.1.0-rc.7 transport components. It verified
+  authenticated `hello`/`ready`, private bootstrap controls, HTTP 200 through
+  the mutually authenticated data pipe, acknowledged shutdown, an empty Job,
+  and AppContainer-profile cleanup.
+- `packaged_supervisor_serves_and_stops_the_confined_web_run` in
+  `apps/desktop/src-tauri/tests/supervisor_production_contract_test.rs` compiles
+  with release behavior and invokes `Supervisor::run_lifecycle`. It verified
+  the public-base/private-navigation split, rc.7 root response, graceful stop,
+  run-history outcome, and cleared endpoint authority.
 
-1. a unique AppContainer profile without elevation or capability SIDs;
-2. allowed private-root reads and denial of caller-profile reads;
-3. hard-link and junction aliases into external roots;
-4. assign-before-resume, root crash, descendant Job containment, and teardown;
-5. authenticated source/destination runtime manifests and physicalized pnpm
-   hard links;
-6. real Node 24.19.0 / DSH 0.1.0-rc.7 `help` and
-   `doctor --json --runtime-only`;
-7. a physicalized rc.7 managed `web` profile with private DSH home, workspace,
-   application data, and temporary paths;
-8. normal, failed-startup, crash, read-only-file, and large-profile cleanup.
-
-## Production decision gate
-
-`tests/full_run_confinement_contract_test.rs` executes the complete private
-web run. On Windows 11 it proves:
-
-- the per-run AppContainer SID is admitted to the otherwise user+SYSTEM named
-  pipe;
-- the child connects and sends authenticated protocol-v1 `hello` and `ready`;
-- `ready` advertises a valid `127.0.0.1` dynamic endpoint;
-- the external supervisor cannot connect to that endpoint
-  (`WSAECONNREFUSED` / OS error 10061);
-- the Job is reaped and the profile root is removed within the bounded cleanup.
-
-Adding Internet/private-network capability SIDs or a machine-wide loopback
-exemption would violate the zero-network boundary. Therefore the prototype is
-not wired into `Supervisor::run_lifecycle`, no renderer toggle is exposed, and
-the ordinary launcher remains the default.
+The automated gates do not launch the packaged Tauri WebView2 window. Its 303
+redirect/cookie application and actual `open_harness_window` navigation remain
+a manual packaged-app smoke rather than an automated claim.
 
 ## Consequences
 
-The current product remains honestly partial and usable. The cost is that a
-malicious model or plugin can still read caller-readable files on Windows. The
-native work is isolated from the verified CLI hardening commit, so it can be
-reviewed and tested without weakening the shipped default.
+Packaged desktop-supervised web runs no longer rely on child TCP loopback and
+do ship a native read boundary. The host retains loopback authority and the
+child retains only the exact named-pipe access needed for its lifecycle and
+proxied connections.
 
-Revisit only when Windows offers a narrowly scoped, per-run loopback transport
-that does not grant general network access, when the product replaces HTTP
-loopback with an authenticated non-network transport, or when upstream ships a
-supported read-capable sandbox seam.
+This is not universal Windows confinement. Direct `pimp-dsh run` remains
+write-only and unconfined for reads, network, and process visibility.
+Zero-capability AppContainer children may still read ambient host objects whose
+ACLs grant broad package/world access. Community plugins still execute with
+harness authority inside whichever run admits them, so review and an
+empty-by-default allowlist remain required.

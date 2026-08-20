@@ -1,5 +1,7 @@
+import { timingSafeEqual } from 'node:crypto'
 import { createConnection, type Socket } from 'node:net'
 import type { Context } from '@deepseek-ai/cordis'
+import { acceptConfinedWebConnection } from './confined-web-transport.js'
 
 /**
  * Child side of the desktop supervisor bridge. The Rust supervisor owns the
@@ -18,6 +20,7 @@ const DISTRIBUTION_VERSION = '0.1.0'
 const DSH_VERSION = '0.1.0-rc.7'
 const LENGTH_PREFIX_BYTES = 4
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/
+const WEB_PIPE_PATTERN = /^\\\\\.\\pipe\\pimp-dsh-web-[0-9a-f]{32}$/
 const CONNECT_TIMEOUT_MS = 5_000
 const HEALTH_INTERVAL_MS = 30_000
 const LOOPBACK_HOST = '127.0.0.1'
@@ -74,18 +77,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+type SupervisorFrame =
+  | { type: 'shutdown'; sequence: number }
+  | { type: 'web-accept'; sequence: number; pipeName: string; connectionToken: string }
+
 /**
- * Validate an incoming supervisor frame. The only Rust-to-child frame is
- * `shutdown`, carrying exactly protocolVersion, type, and sequence.
+ * Authenticate and strictly sequence one Rust-to-child control frame.
+ * Both directions own independent sequence counters beginning at one.
  */
-function isShutdownFrame(value: unknown): value is { sequence: number } {
-  if (!isRecord(value)) return false
-  if (Object.keys(value).length !== 3) return false
-  return value.protocolVersion === PROTOCOL_VERSION
-    && value.type === 'shutdown'
-    && typeof value.sequence === 'number'
-    && Number.isInteger(value.sequence)
-    && value.sequence >= 0
+export function parseSupervisorFrame(
+  value: unknown,
+  environment: Pick<SupervisorEnvironment, 'runId' | 'token'>,
+  expectedSequence: number,
+): SupervisorFrame | undefined {
+  if (!isRecord(value) || typeof value.type !== 'string') return undefined
+  const expectedKeys = value.type === 'shutdown' ? 5 : value.type === 'web-accept' ? 7 : 0
+  if (Object.keys(value).length !== expectedKeys) return undefined
+  if (value.protocolVersion !== PROTOCOL_VERSION
+    || value.runId !== environment.runId
+    || typeof value.token !== 'string'
+    || !TOKEN_PATTERN.test(value.token)
+    || !timingSafeEqual(Buffer.from(value.token), Buffer.from(environment.token))
+    || value.sequence !== expectedSequence) return undefined
+
+  if (value.type === 'shutdown') return { type: 'shutdown', sequence: expectedSequence }
+  if (typeof value.pipeName !== 'string'
+    || !WEB_PIPE_PATTERN.test(value.pipeName)
+    || typeof value.connectionToken !== 'string'
+    || !TOKEN_PATTERN.test(value.connectionToken)) return undefined
+  return {
+    type: 'web-accept',
+    sequence: expectedSequence,
+    pipeName: value.pipeName,
+    connectionToken: value.connectionToken,
+  }
 }
 
 export interface HealthCheckPayload {
@@ -116,12 +141,15 @@ class ChildBridge {
   private sequence = SEQUENCE_BASE
   private socket: Socket | null = null
   private receiveBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+  private receiveSequence = SEQUENCE_BASE
   private writePending = false
   private healthTimer: NodeJS.Timeout | null = null
   private readySent = false
   private readyPort: number | null = null
   private shutdownStarted = false
   private tornDown = false
+  private failed = false
+  private statusDispose: (() => boolean) | null = null
 
   constructor(
     private readonly ctx: Context,
@@ -151,6 +179,21 @@ class ChildBridge {
   }
 
   private onConnect(): void {
+    this.statusDispose = this.ctx.on('internal/status', (fiber) => {
+      const diagnostic = fiber as unknown as {
+        state?: number
+        runtime?: { name?: unknown } | null
+        _error?: unknown
+      }
+      if (diagnostic.state !== 3) return
+      const name = typeof diagnostic.runtime?.name === 'string'
+        ? diagnostic.runtime.name
+        : 'unknown plugin'
+      const reason = diagnostic._error instanceof Error
+        ? diagnostic._error.message
+        : String(diagnostic._error ?? 'unknown failure')
+      this.failClosed(`plugin startup failed: ${name}: ${reason}`)
+    }, { global: true })
     this.sendFrame('hello')
     this.awaitWebServer()
     this.healthTimer = setInterval(() => this.sendHealth(), HEALTH_INTERVAL_MS)
@@ -163,16 +206,16 @@ class ChildBridge {
         const port = server?.port
         const host = server?.host
         if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
-          this.sendFrame('error', { message: 'web server did not report a valid bound port' })
+          this.failClosed('web server did not report a valid bound port')
           return
         }
         if (host !== LOOPBACK_HOST) {
-          this.sendFrame('error', { message: 'web server did not bind to loopback' })
+          this.failClosed('web server did not bind to loopback')
           return
         }
         this.sendReady(port)
       } catch {
-        this.sendFrame('error', { message: 'web server readiness failed' })
+        this.failClosed('web server readiness failed')
       }
     })
   }
@@ -226,17 +269,17 @@ class ChildBridge {
   }
 
   private onData(chunk: Buffer): void {
+    if (this.failed) return
     this.receiveBuffer = this.receiveBuffer.length === 0 ? chunk : Buffer.concat([this.receiveBuffer, chunk])
     this.drainFrames()
   }
 
   private drainFrames(): void {
     for (;;) {
-      if (this.receiveBuffer.length < LENGTH_PREFIX_BYTES) return
+      if (this.failed || this.receiveBuffer.length < LENGTH_PREFIX_BYTES) return
       const length = this.receiveBuffer.readUInt32LE(0)
       if (length > MAX_FRAME_BYTES) {
-        this.sendFrame('error', { message: 'received an oversized frame' })
-        this.closeSocket()
+        this.failClosed('received an oversized frame')
         return
       }
       if (this.receiveBuffer.length < LENGTH_PREFIX_BYTES + length) return
@@ -251,14 +294,24 @@ class ChildBridge {
     try {
       value = JSON.parse(body.toString('utf8'))
     } catch {
-      this.sendFrame('error', { message: 'received a malformed frame' })
+      this.failClosed('received a malformed frame')
       return
     }
-    if (!isShutdownFrame(value)) {
-      this.sendFrame('error', { message: 'received an invalid frame' })
+    const frame = parseSupervisorFrame(value, this.environment, this.receiveSequence)
+    if (frame === undefined) {
+      this.failClosed('received an invalid frame')
       return
     }
-    void this.handleShutdown()
+    this.receiveSequence += 1
+    if (frame.type === 'shutdown') {
+      void this.handleShutdown()
+      return
+    }
+    void acceptConfinedWebConnection(frame.pipeName, frame.connectionToken)
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : 'unknown error'
+        this.failClosed(`confined web connection failed: ${reason}`)
+      })
   }
 
   private async handleShutdown(): Promise<void> {
@@ -277,6 +330,13 @@ class ChildBridge {
     }
   }
 
+  private failClosed(message: string): void {
+    if (this.failed) return
+    this.failed = true
+    this.ctx.logger('supervisor-bridge').warn(message)
+    this.sendFrame('error', { message })
+  }
+
   private onSocketError(): void {
     // Fail closed without disclosing any environment value.
     this.ctx.logger('supervisor-bridge').warn('supervisor bridge connection closed unexpectedly')
@@ -293,6 +353,7 @@ class ChildBridge {
     if (socket !== null) socket.destroy()
   }
 
+
   private clearHealth(): void {
     if (this.healthTimer !== null) {
       clearInterval(this.healthTimer)
@@ -304,6 +365,13 @@ class ChildBridge {
     if (this.tornDown) return
     this.tornDown = true
     this.clearHealth()
+    if (this.statusDispose !== null) {
+      this.statusDispose()
+      this.statusDispose = null
+    }
+    if (!this.shutdownStarted && !this.failed) {
+      this.sendFrame('error', { message: 'application disposed before supervisor shutdown' })
+    }
     // A bridge-initiated shutdown exits through DSH's SIGTERM controller;
     // process teardown closes the pipe after application disposal.
     if (!this.shutdownStarted) this.closeSocket()
@@ -318,8 +386,12 @@ class ChildBridge {
 export function registerSupervisorBridge(ctx: Context): void {
   const environment = readEnvironment(process.env)
   if (environment === undefined) return
-  ctx.effect(() => {
-    const bridge = new ChildBridge(ctx, environment)
+  // The distribution plugin depends on reloadable services. Root ownership
+  // keeps the authenticated bridge alive across that plugin fiber restarting;
+  // the captured environment is deleted, so later registrations are no-ops.
+  const owner = (ctx as Context & { root?: Context }).root ?? ctx
+  owner.effect(() => {
+    const bridge = new ChildBridge(owner, environment)
     bridge.connect()
     return () => bridge.dispose()
   })

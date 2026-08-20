@@ -20,10 +20,78 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 /// Token length: 64 lowercase hex characters.
 pub const TOKEN_CHARS: usize = 64;
 
-/// The only Rust→child frame type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Shutdown {
-    Shutdown { sequence: u64 },
+/// Stateful encoder for the independently sequenced Rust→child channel.
+#[derive(Clone, Debug)]
+pub struct HostFrameEncoder {
+    run_id: String,
+    token: String,
+    next_sequence: u64,
+}
+
+impl HostFrameEncoder {
+    pub fn new(run_id: impl Into<String>, token: impl Into<String>) -> Result<Self, ProtocolError> {
+        let run_id = run_id.into();
+        let token = token.into();
+        if run_id.is_empty() {
+            return Err(ProtocolError::BadRun);
+        }
+        if !is_lower_hex(&token, TOKEN_CHARS) {
+            return Err(ProtocolError::BadToken);
+        }
+        Ok(Self {
+            run_id,
+            token,
+            next_sequence: 1,
+        })
+    }
+
+    pub fn encode_shutdown(&mut self) -> Result<Vec<u8>, ProtocolError> {
+        self.encode("shutdown", None)
+    }
+
+    pub fn encode_web_accept(
+        &mut self,
+        pipe_name: &str,
+        connection_token: &str,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        const PIPE_PREFIX: &str = r"\\.\pipe\pimp-dsh-web-";
+        let suffix = pipe_name.strip_prefix(PIPE_PREFIX);
+        if !suffix.is_some_and(|value| is_lower_hex(value, 32))
+            || !is_lower_hex(connection_token, TOKEN_CHARS)
+        {
+            return Err(ProtocolError::BadField);
+        }
+        self.encode("web-accept", Some((pipe_name, connection_token)))
+    }
+
+    fn encode(&mut self, kind: &str, web: Option<(&str, &str)>) -> Result<Vec<u8>, ProtocolError> {
+        let sequence = self.next_sequence;
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or(ProtocolError::BadSequence)?;
+        let mut body = serde_json::json!({
+            "protocolVersion": 1,
+            "type": kind,
+            "runId": self.run_id,
+            "token": self.token,
+            "sequence": sequence,
+        });
+        if let Some((pipe_name, connection_token)) = web {
+            let object = body.as_object_mut().expect("host frame is an object");
+            object.insert("pipeName".into(), pipe_name.into());
+            object.insert("connectionToken".into(), connection_token.into());
+        }
+        let body = serde_json::to_vec(&body).expect("host frame serializes");
+        Ok(frame_bytes(&body))
+    }
+}
+
+fn is_lower_hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Child→Rust frame types (authenticated, then parsed).
@@ -166,7 +234,14 @@ pub fn decode(
             "distributionVersion",
             "dshVersion",
         ],
-        "health" => &["protocolVersion", "type", "runId", "token", "sequence", "checks"],
+        "health" => &[
+            "protocolVersion",
+            "type",
+            "runId",
+            "token",
+            "sequence",
+            "checks",
+        ],
         "stopping" => &["protocolVersion", "type", "runId", "token", "sequence"],
         "stopped" => &["protocolVersion", "type", "runId", "token", "sequence"],
         "error" => &[
@@ -226,7 +301,9 @@ pub fn decode(
             let checks: Vec<HealthCheck> = obj
                 .get("checks")
                 .ok_or(ProtocolError::BadField)
-                .and_then(|v| serde_json::from_value(v.clone()).map_err(|_| ProtocolError::BadField))?;
+                .and_then(|v| {
+                    serde_json::from_value(v.clone()).map_err(|_| ProtocolError::BadField)
+                })?;
             Frame::Health {
                 run_id: run_id.to_string(),
                 token: token.to_string(),
@@ -323,16 +400,8 @@ pub fn decode(
     Ok(frame)
 }
 
-/// Encode a Rust→child `shutdown` frame (framed: length prefix + JSON body).
-pub fn encode_shutdown(sequence: u64) -> Vec<u8> {
-    let body = serde_json::json!({
-        "protocolVersion": 1,
-        "type": "shutdown",
-        "sequence": sequence,
-    });
-    let body = serde_json::to_vec(&body).expect("static shutdown frame serializes");
-    frame_bytes(&body)
-}
+/// Rust→child frames must be encoded through [`HostFrameEncoder`], which owns
+/// the authenticated channel's sequence.
 
 /// Prefix an already-serialized JSON body with its little-endian length.
 pub fn frame_bytes(body: &[u8]) -> Vec<u8> {
@@ -562,18 +631,27 @@ mod tests {
     }
 
     #[test]
-    fn shutdown_frame_shape() {
-        let out = encode_shutdown(7);
-        let prefix = u32::from_le_bytes([out[0], out[1], out[2], out[3]]) as usize;
-        let body = std::str::from_utf8(&out[4..4 + prefix]).unwrap();
-        let v: serde_json::Value = serde_json::from_str(body).unwrap();
-        assert_eq!(v["protocolVersion"], 1);
-        assert_eq!(v["type"], "shutdown");
-        assert_eq!(v["sequence"], 7);
-        assert!(v.get("token").is_none());
-        assert!(v.get("runId").is_none());
+    fn host_frames_are_authenticated_and_strictly_sequenced() {
+        let mut encoder = HostFrameEncoder::new(RUN, TOKEN).unwrap();
+        let shutdown = encoder.encode_shutdown().unwrap();
+        let web = encoder
+            .encode_web_accept(
+                r"\\.\pipe\pimp-dsh-web-0123456789abcdef0123456789abcdef",
+                TOKEN,
+            )
+            .unwrap();
+        let shutdown: serde_json::Value = serde_json::from_slice(&shutdown[4..]).unwrap();
+        let web: serde_json::Value = serde_json::from_slice(&web[4..]).unwrap();
+        assert_eq!(shutdown["sequence"], 1);
+        assert_eq!(web["sequence"], 2);
+        assert_eq!(shutdown["runId"], RUN);
+        assert_eq!(shutdown["token"], TOKEN);
+        assert_eq!(
+            web["pipeName"],
+            r"\\.\pipe\pimp-dsh-web-0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(web["connectionToken"], TOKEN);
     }
-
     #[test]
     fn construct_endpoint_is_loopback() {
         assert_eq!(

@@ -83,10 +83,12 @@ also disables the telemetry backend row. Therefore:
 - The `update-check` CLI command performs a version lookup only and sends no
   data about the local machine.
 
-## Windows sandbox: partial write confinement
+## Windows sandbox boundaries
 
-On Windows, command execution is confined by the upstream ACL restricted-token
-runner (`@deepseek-ai/dsh-sandbox-windows-acl`). The mechanism duplicates the
+### Direct CLI: partial write confinement
+
+Direct `pimp-dsh run` uses the upstream ACL restricted-token runner
+(`@deepseek-ai/dsh-sandbox-windows-acl`). The mechanism duplicates the
 caller's token into a `WRITE_RESTRICTED` token whose restricting SIDs carry
 workspace and private-temp write capabilities.
 
@@ -96,15 +98,15 @@ The runner reports `enforcement: 'partial'`. This is deliberate and honest:
   `WRITE_RESTRICTED` intersects write accesses only. A confined child can read
   any caller-readable file and open sockets.
 
-`doctor` surfaces the boundary status: volume filesystem (FAT-family volumes
-have no ACLs — flagged), hard-link aliases on the workspace/`DSH_HOME`/memory
-file, `Everyone` write grants on the same roots, and an explicit
-`read-side-confinement: unavailable` result because no native read policy or
-AppContainer token is shipped. The feasibility decision and prototype exit
-criteria are recorded in
+For the direct CLI, `doctor` surfaces the boundary status: volume filesystem
+(FAT-family volumes have no ACLs — flagged), hard-link aliases on the
+workspace/`DSH_HOME`/memory file, `Everyone` write grants on the same roots,
+and `read-side-confinement: unavailable`. That result describes the direct
+upstream runner; it does not mean the packaged desktop ships no native
+AppContainer path. The desktop decision is recorded in
 [`ADR-0004`](adr/0004-windows-read-side-confinement.md). When browser
-automation is enabled it also reports whether the Firewall confinement rules
-from `scripts/confine-browser.ps1` are active.
+automation is enabled, `doctor` also reports whether the Firewall confinement
+rules from `scripts/confine-browser.ps1` are active.
 - **`Everyone` grants remain ambient write authority.** `Everyone` must stay in
   the restricting list for early DLL initialization and CNG to work. An
   external NTFS object whose DACL grants `Everyone` a requested write right
@@ -123,9 +125,36 @@ per-session temp subdirectory carry write grants, and other ACL-addressable
 writes are denied except for the documented boundaries above. Escalation to
 `danger-full-access` requires an approval prompt.
 
-**Do not treat a confined session as a security boundary against a malicious
-model or plugin.** The sandbox reduces accidental or careless writes; it does
-not contain a determined adversary.
+### Packaged desktop-supervised web runs: native read confinement
+
+Packaged Windows desktop-supervised web runs use a unique zero-capability
+AppContainer profile and a private staged runtime, web profile, workspace,
+application-data tree, temporary directory, and empty credential file. The
+child has no TCP listener: a pinned Node preload keeps its server alive on a
+`LOCAL` named-pipe anchor, while an authenticated host loopback proxy creates
+an exact-AppContainer-SID data pipe and random connection token for each
+accepted browser connection. Authenticated, sequenced `web-accept` frames
+deliver those values over the control pipe. The child proves receipt of that
+command by writing the connection token immediately after connecting; the host
+verifies it before forwarding any browser bytes.
+The private bootstrap URL issues an `HttpOnly`, host-only, `SameSite=Strict`
+cookie with no-store and
+no-referrer protections; the public base URL does not reveal the bootstrap
+secret. The tunnel preserves raw HTTP, SSE, and WebSocket bytes.
+
+This native boundary is specific to packaged desktop-supervised web runs.
+Direct `pimp-dsh run` remains write-only and unconfined for reads, network, and
+process visibility. A zero-capability AppContainer is also not a promise that
+every ambient host object is unreadable: objects whose ACLs grant access to all
+application packages or other broad/world-readable principals may remain
+visible.
+
+**Do not treat either Windows path as complete containment for a malicious
+model or plugin.** The direct CLI sandbox primarily reduces accidental or
+careless writes. The packaged desktop AppContainer adds a real read and
+network boundary, but admitted plugins still execute with harness authority
+inside that boundary and retain access to its staged data and any ambient
+object Windows permits them to read.
 
 ## Web fetch disabled; browser automation isolated and opt-in
 

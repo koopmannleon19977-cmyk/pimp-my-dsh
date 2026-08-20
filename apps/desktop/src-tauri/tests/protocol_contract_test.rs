@@ -6,7 +6,7 @@
 //! authentication, replay rejection, and ready host/port/url validation.
 
 use pimp_dsh_desktop::protocol::{
-    Frame, MAX_FRAME_BYTES, ProtocolError, TOKEN_CHARS, decode, encode_shutdown,
+    Frame, HostFrameEncoder, MAX_FRAME_BYTES, ProtocolError, TOKEN_CHARS, decode,
 };
 
 const RUN: &str = "run-123";
@@ -256,13 +256,40 @@ fn rejects_zero_port_ready() {
 }
 
 #[test]
-fn encode_shutdown_round_trips_the_frame() {
-    let bytes = encode_shutdown(7);
-    assert!(bytes.len() >= 4);
-    let declared = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
-    assert_eq!(declared, bytes.len() - 4);
-    let body: serde_json::Value = serde_json::from_slice(&bytes[4..]).expect("valid shutdown JSON");
-    assert_eq!(body["protocolVersion"], 1);
-    assert_eq!(body["type"], "shutdown");
-    assert_eq!(body["sequence"], 7);
+fn rust_to_child_frames_are_authenticated_and_share_one_sequence() {
+    let mut encoder = HostFrameEncoder::new(RUN, TOKEN).expect("valid channel identity");
+    let shutdown = encoder.encode_shutdown().expect("encode shutdown");
+    let web_accept = encoder
+        .encode_web_accept(
+            r"\\.\pipe\pimp-dsh-web-0123456789abcdef0123456789abcdef",
+            TOKEN,
+        )
+        .expect("encode web accept");
+
+    for (bytes, kind, sequence) in [(&shutdown, "shutdown", 1), (&web_accept, "web-accept", 2)] {
+        let declared = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+        assert_eq!(declared, bytes.len() - 4);
+        let body: serde_json::Value = serde_json::from_slice(&bytes[4..]).expect("valid host JSON");
+        assert_eq!(body["protocolVersion"], 1);
+        assert_eq!(body["type"], kind);
+        assert_eq!(body["runId"], RUN);
+        assert_eq!(body["token"], TOKEN);
+        assert_eq!(body["sequence"], sequence);
+    }
+}
+
+#[test]
+fn web_accept_rejects_malformed_pipe_or_connection_token() {
+    let mut encoder = HostFrameEncoder::new(RUN, TOKEN).unwrap();
+    assert_eq!(
+        encoder.encode_web_accept(r"\\.\pipe\wrong", TOKEN),
+        Err(ProtocolError::BadField)
+    );
+    assert_eq!(
+        encoder.encode_web_accept(
+            r"\\.\pipe\pimp-dsh-web-0123456789abcdef0123456789abcdef",
+            "ABC"
+        ),
+        Err(ProtocolError::BadField)
+    );
 }

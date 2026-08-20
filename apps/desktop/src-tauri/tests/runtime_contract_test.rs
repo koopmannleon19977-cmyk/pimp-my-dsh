@@ -21,12 +21,14 @@
 
 use std::ffi::OsString;
 use std::io;
+use std::os::windows::fs::symlink_dir;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use pimp_dsh_desktop::compatibility::{LaunchSpec, PackagedProvider, Provider};
 use pimp_dsh_desktop::confinement::Confinement;
 use pimp_dsh_desktop::job::{ChildGuard, FileHandle, Job};
+use pimp_dsh_desktop::pipe::BridgePipe;
 
 /// Drain a pipe to EOF and return its text. Bounded by the caller's exit /
 /// termination window, never by unbounded reads.
@@ -259,4 +261,139 @@ fn stage_runtime_rejects_a_workspace_source_and_still_cleans_up() {
         !scope.private_root().exists(),
         "rejected staging must still remove the private profile root"
     );
+}
+
+#[test]
+fn staged_node_http_accepts_an_authenticated_host_pipe_connection() {
+    let source_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("runtime")
+        .join("manifest.json");
+    if !source_manifest.is_file() {
+        println!(
+            "SKIP pipe injection probe: apps/desktop/src-tauri/runtime/manifest.json not staged"
+        );
+        return;
+    }
+
+    let source = PackagedProvider::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .resolve()
+        .expect("resolve the verified packaged runtime");
+    let mut scope = ProbeApp::create();
+    let staged = scope
+        .conf()
+        .stage_runtime(&source)
+        .expect("stage the verified runtime into the private root");
+    let script = scope.private_root().join("pipe-injection-probe.mjs");
+    std::fs::write(
+        &script,
+        r#"import { createServer } from "node:http";
+const [transportUrl, duplicateUrl, pipeName, token] = process.argv.slice(2);
+process.env.DSH_PIMP_DSH_CHILD = "1";
+process.env.DSH_PIMP_CONFINED_WEB = "1";
+process.env.DSH_PIMP_WEB_PROXY_PORT = "43123";
+process.env.DSH_PIMP_WEB_ANCHOR_PIPE = "\\\\.\\pipe\\LOCAL\\pimp-dsh-anchor-dddddddddddddddddddddddddddddddd";
+await import(transportUrl);
+const transport = await import(duplicateUrl);
+const server = createServer((_request, response) => {
+  response.writeHead(200, { "content-length": "4", connection: "close" });
+  response.end("pong", () => process.exit(0));
+});
+server.on("error", (error) => {
+  console.error(error.code ?? String(error));
+  process.exit(21);
+});
+server.listen(43123, "127.0.0.1");
+await transport.acceptConfinedWebConnection(pipeName, token);
+setTimeout(() => process.exit(23), 10_000);
+"#,
+    )
+    .expect("write private pipe injection probe");
+
+    let suffix = format!(
+        "{:032x}",
+        ((std::process::id() as u128) << 64)
+            | chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default() as u128
+    );
+    let pipe_name = format!(r"\\.\pipe\pimp-dsh-web-{suffix}");
+    let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let tunnel = BridgePipe::create_for_appcontainer(&pipe_name, scope.conf())
+        .expect("create run-scoped tunnel pipe");
+    let transport = staged.cli_entry.with_file_name("confined-web-transport.js");
+    let transport_url = tauri::Url::from_file_path(&transport).expect("transport file URL");
+    let duplicate_dir = scope.private_root().join("duplicate-cli");
+    symlink_dir(
+        transport.parent().expect("transport parent"),
+        &duplicate_dir,
+    )
+    .expect("create duplicate transport module path");
+    let duplicate_transport = duplicate_dir.join("confined-web-transport.js");
+    let duplicate_url =
+        tauri::Url::from_file_path(&duplicate_transport).expect("duplicate transport file URL");
+    let mut spec = probe_spec(
+        &staged,
+        vec![
+            OsString::from(transport_url.as_str()),
+            OsString::from(duplicate_url.as_str()),
+            OsString::from(&pipe_name),
+            OsString::from(token),
+        ],
+    );
+    spec.cli_entry = script;
+
+    let job = Job::new().expect("Job::new");
+    let guard = ChildGuard::new(
+        job.create_suspended_with(&spec, Some(scope.conf()))
+            .expect("spawn the staged Node HTTP probe"),
+    );
+    job.assign(guard.child()).expect("assign before resume");
+    job.resume(guard.child()).expect("resume HTTP probe");
+    let child = guard.into_inner();
+    tunnel
+        .connect_timeout(Duration::from_secs(10))
+        .expect("confined child connects to the host-owned tunnel");
+
+    let request = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let mut proof = [0u8; 64];
+    tunnel
+        .read_exact_timeout(&mut proof, Duration::from_secs(2))
+        .expect("read confined child connection proof");
+    assert_eq!(&proof, token.as_bytes());
+    tunnel
+        .write_all_blocking(request)
+        .expect("write authenticated HTTP request");
+
+    let reader = std::thread::spawn(move || {
+        let mut response = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            match tunnel.read_blocking(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => {
+                    response.extend_from_slice(&chunk[..count]);
+                }
+                Err(error) => panic!("read authenticated HTTP response to EOF: {error}"),
+            }
+        }
+        response
+    });
+    let code = child
+        .process
+        .wait_timeout(Duration::from_secs(10))
+        .expect("wait for injected HTTP request");
+    if code.is_none() {
+        let _ = job.terminate();
+    }
+    let response = reader.join().expect("join tunnel reader");
+    assert_eq!(code, Some(0), "injected HTTP request must exit cleanly");
+    let response = String::from_utf8_lossy(&response);
+    assert!(
+        response.starts_with("HTTP/1.1 200") && response.contains("\r\n\r\npong"),
+        "unexpected injected HTTP response: {response}"
+    );
+    let stderr = drain(&child.stderr);
+    assert!(stderr.is_empty(), "pipe injection stderr: {stderr}");
+
+    scope
+        .cleanup()
+        .expect("remove the private profile after the pipe injection probe");
 }

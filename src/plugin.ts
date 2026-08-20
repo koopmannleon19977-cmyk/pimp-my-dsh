@@ -31,6 +31,7 @@ import { registerSupervisorBridge } from './supervisor-bridge.js'
 export const name = 'pimp-my-dsh'
 export const inject = ['systemPrompt', 'tools', 'subagents']
 
+const CONFINED_HMR = Symbol.for('pimp-my-dsh.confined-hmr')
 const MAX_GIT_OUTPUT = 16_000
 const MAX_MEMORY_TEXT = 4_096
 const MAX_MEMORY_READ_BYTES = 1_048_576
@@ -846,6 +847,20 @@ async function runWebSearch(query: string, maxResults: number): Promise<WebSearc
 }
 
 export function apply(ctx: Context): void {
+  if (process.env.DSH_PIMP_CONFINED_ROOT !== undefined) {
+    const processState = globalThis as unknown as Record<symbol, unknown>
+    if (processState[CONFINED_HMR] !== true) {
+      const root = ctx.root as unknown as {
+        provide(name: string, value: unknown): unknown
+      }
+      root.provide('hmr', {
+        async registerConfig(): Promise<() => Promise<void>> {
+          return async () => {}
+        },
+      })
+      processState[CONFINED_HMR] = true
+    }
+  }
   ctx.systemPrompt.section({
     name: 'distribution:pimp-my-dsh',
     order: -90,

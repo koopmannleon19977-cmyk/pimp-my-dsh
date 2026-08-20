@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { registerSupervisorBridge, buildHealthChecks } from '../src/supervisor-bridge'
+import { registerSupervisorBridge, buildHealthChecks, parseSupervisorFrame } from '../src/supervisor-bridge'
 
 const ENV_PIPE = 'DSH_PIMP_SUPERVISOR_PIPE'
 const ENV_TOKEN = 'DSH_PIMP_SUPERVISOR_TOKEN'
@@ -63,5 +63,43 @@ describe('buildHealthChecks', () => {
     expect(buildHealthChecks(58581)).toEqual([
       { id: 'web-server', status: 'ok', message: 'listening on 127.0.0.1:58581' },
     ])
+  })
+})
+
+describe('Rust-to-child control frames', () => {
+  const environment = { runId: 'run123', token: 'f'.repeat(64) }
+  const shutdown = {
+    protocolVersion: 1,
+    type: 'shutdown',
+    runId: environment.runId,
+    token: environment.token,
+    sequence: 1,
+  }
+  const webAccept = {
+    ...shutdown,
+    type: 'web-accept',
+    pipeName: '\\\\.\\pipe\\pimp-dsh-web-' + 'a'.repeat(32),
+    connectionToken: 'b'.repeat(64),
+  }
+
+  it('authenticates and independently sequences both accepted frame types', () => {
+    expect(parseSupervisorFrame(shutdown, environment, 1)).toEqual({ type: 'shutdown', sequence: 1 })
+    expect(parseSupervisorFrame({ ...webAccept, sequence: 2 }, environment, 2)).toEqual({
+      type: 'web-accept',
+      sequence: 2,
+      pipeName: webAccept.pipeName,
+      connectionToken: webAccept.connectionToken,
+    })
+  })
+
+  it.each([
+    ['wrong run', { ...shutdown, runId: 'other' }],
+    ['wrong token', { ...shutdown, token: 'e'.repeat(64) }],
+    ['wrong sequence', { ...shutdown, sequence: 2 }],
+    ['extra field', { ...shutdown, extra: true }],
+    ['malformed pipe', { ...webAccept, pipeName: '\\\\.\\pipe\\other' }],
+    ['malformed connection token', { ...webAccept, connectionToken: 'A'.repeat(64) }],
+  ])('rejects %s', (_label, frame) => {
+    expect(parseSupervisorFrame(frame, environment, 1)).toBeUndefined()
   })
 })

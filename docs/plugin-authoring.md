@@ -7,10 +7,13 @@ auto-discovery, or runtime installation command.
 ## Security boundary
 
 A plugin admitted to the allowlist receives execution authority inside the
-harness process. The Windows sandbox remains a partial **write** boundary:
-reads, process visibility, and network access are not fully confined. Review
-must therefore reject a plugin that is not trusted, even when its declared
-permission surface looks narrow.
+harness process. Packaged Windows desktop-supervised web runs place that
+process in a zero-capability AppContainer, but an admitted plugin still has
+authority over the staged run and may read ambient host objects whose ACLs
+grant broad package/world access. Direct `pimp-dsh run` remains only
+write-confined: reads, process visibility, and network access are not confined.
+Review must therefore reject a plugin that is not trusted, even when its
+declared permission surface looks narrow.
 
 The machine-readable gate is:
 
@@ -218,6 +221,7 @@ allowlist.
 
 The allowlist gate does not sandbox an admitted plugin, verify a package's
 runtime behavior, or replace code signing and provenance. It is a conservative
-human review boundary around exact profile admission. The Windows read-side
-limitation remains documented in
+human review boundary around exact profile admission. The packaged-desktop
+read boundary, direct-CLI limitation, and remaining world-readable-object
+risk are documented in
 [`ADR-0004`](adr/0004-windows-read-side-confinement.md).

@@ -76,8 +76,10 @@ no-fork decision.
       block rules for loopback/RFC1918/link-local/multicast on the pinned
       Playwright Chromium). Per-machine elevated step; enabling automation by
       default stays gated on that step per machine.
-- [ ] Add production read-side confinement on Windows. The current upstream
-      token has no read restriction; `doctor` remains unavailable.
+- [x] Add production read-side confinement on Windows for **packaged
+      desktop-supervised web runs**. Direct `pimp-dsh run` remains on the
+      upstream write-only restricted-token path, and its `doctor` result remains
+      `read-side-confinement: unavailable`.
   - [x] AppContainer fixture matrix: zero capabilities, outside-read denial,
         hard-link/junction escapes, Job descendants, crash/start-failure and
         bounded cleanup (`tests/confinement_contract_test.rs`).
@@ -86,17 +88,30 @@ no-fork decision.
   - [x] Physicalized rc.7 web profile, per-run pipe SID, authenticated
         `hello`/`ready`, and cleanup decision gate
         (`tests/full_run_confinement_contract_test.rs`).
-  - [x] Production no-go recorded: the zero-capability child advertises a
-        loopback endpoint, but the host receives WSAECONNREFUSED (10061).
-  - [ ] Replace HTTP loopback with an authenticated non-network transport or
-        obtain a narrowly scoped per-run loopback primitive; broad network
-        capability SIDs and machine-wide loopback exemptions are rejected.
+  - [x] Preserve the historical transport no-go: the zero-capability child
+        advertised a loopback endpoint, but the host received
+        `WSAECONNREFUSED` (10061).
+  - [x] Replace child HTTP loopback with an authenticated non-network
+        transport: a `LOCAL` named-pipe lifecycle anchor, host-created
+        exact-SID per-connection data pipes, authenticated sequenced
+        `web-accept` frames, and an authenticated host loopback proxy. Broad
+        network capability SIDs and machine-wide loopback exemptions remain
+        rejected.
+  - [x] Pass the real rc.7 transport-component gate
+        `private_real_web_run_serves_through_authenticated_host_pipe_proxy`:
+        HTTP 200 through the proxy, acknowledged shutdown, empty Job, and
+        AppContainer-profile cleanup.
+  - [x] Pass the release-only Supervisor lifecycle gate
+        `packaged_supervisor_serves_and_stops_the_confined_web_run`: the real
+        `Supervisor::run_lifecycle` kept the bootstrap URL private, served the
+        rc.7 root, stopped gracefully, and cleared endpoint authority.
+        WebView2 redirect/cookie behavior remains a manual packaged-app smoke.
 - [x] Add a machine-readable community-plugin review checklist artifact that
       the reviewed allowlist gate consumes (`schema/community-plugin-allowlist-v1`).
 - [x] Add `doctor` checks for the Windows sandbox boundaries (volume
       filesystem, hard-link aliases, `Everyone` grants, browser-confinement
-      status, and explicit read-side unavailability) surfaced in the lobby
-      doctor panel.
+      status, and explicit direct-CLI read-side unavailability) surfaced in
+      the lobby doctor panel.
 - [x] Add a `--json` schema version field to structured CLI results, including
       JSON error output.
 

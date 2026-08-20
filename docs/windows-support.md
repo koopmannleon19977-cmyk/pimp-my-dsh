@@ -39,9 +39,9 @@ The upstream base bundle gates both shell stacks by platform on its own rows:
 `pwsh-sandbox`/`tool-pwsh` mount on win32 only. Exactly one shell stack is
 active per host.
 
-## Sandbox
+## Direct CLI sandbox
 
-On Windows, the sandbox seam resolves to the ACL restricted-token runner chain
+Direct `pimp-dsh run` resolves to the ACL restricted-token runner chain
 (`dsh-sandbox-local` → `@deepseek-ai/dsh-sandbox-windows-acl`).
 
 | Property | Value |
@@ -56,7 +56,11 @@ On Windows, the sandbox seam resolves to the ACL restricted-token runner chain
 | Process visibility | **Not restricted** |
 
 The partial-enforcement boundaries are documented in
-[docs/security-model.md](security-model.md#windows-sandbox-partial-write-confinement).
+[docs/security-model.md](security-model.md#direct-cli-partial-write-confinement).
+
+This table applies to direct CLI runs. They remain write-only and unconfined
+for reads, network, and process visibility; the packaged desktop-supervised
+web-run boundary is separate.
 
 ## Process cleanup
 
@@ -96,6 +100,41 @@ persistent interactive PTY.
 - **FAT-class volumes are writable** under confined modes (no ACL support).
 
 ## Desktop supervisor (Windows)
+
+### Packaged web-run AppContainer
+
+Packaged Windows desktop-supervised web runs use a unique zero-capability
+AppContainer profile, private physicalized runtime/profile roots, an empty
+credential file, AppContainer-virtualized Temp path, authenticated per-package
+native-module links, and disabled credential/settings/HMR watchers. The host
+creates the control
+and per-connection data pipes with the exact per-run AppContainer SID. A pinned
+Node preload holds the child server on a `LOCAL` named-pipe lifecycle anchor
+and accepts authenticated, sequenced `web-accept` requests through a
+process-global acceptor; the child does not open a TCP listener.
+For each data connection the child writes the token received on the
+authenticated control channel; the host verifies it before forwarding cookies
+or request bytes, so another allowed current-user pipe client cannot receive or
+inject browser traffic.
+
+The trusted host owns the loopback proxy. Status reports its public base URL,
+while desktop navigation receives a private bootstrap URL that installs an
+`HttpOnly`, host-only, `SameSite=Strict` cookie with no-store and no-referrer
+protections. The proxy then tunnels raw HTTP, SSE, and WebSocket bytes over
+authenticated host-created data pipes.
+
+The rc.7 component gate
+`private_real_web_run_serves_through_authenticated_host_pipe_proxy` and the
+release-behavior Supervisor gate
+`packaged_supervisor_serves_and_stops_the_confined_web_run` both pass. Together
+they cover HTTP 200, private/public endpoint separation, graceful shutdown,
+empty Job, history outcome, and per-run profile removal. The actual packaged
+WebView2 redirect/cookie/navigation path remains a manual smoke. Startup and
+transport failures never fall back to an unconfined desktop child.
+
+This boundary does not apply to direct `pimp-dsh run`, and it does not make
+every ambient host object unreadable. Objects with broad package/world-readable
+ACLs may remain visible inside the zero-capability AppContainer.
 
 ### WebView2 on Windows
 

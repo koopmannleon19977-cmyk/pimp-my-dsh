@@ -237,15 +237,22 @@ mod imp {
             let temp = private_root.join("temp");
             let roaming = dsh_home.join("AppData").join("Roaming");
             let local = dsh_home.join("AppData").join("Local");
-            for directory in [&workspace, &temp, &roaming, &local] {
+            let virtual_temp = local
+                .join("Packages")
+                .join(&self.profile_name)
+                .join("AC")
+                .join("Temp");
+            for directory in [&workspace, &temp, &roaming, &local, &virtual_temp] {
                 std::fs::create_dir_all(directory)?;
             }
+            std::fs::write(dsh_home.join(".credentials.yaml"), b"")?;
             if dest_profile.exists() {
                 return Err(io::Error::other(
                     "refusing to overwrite an existing private web profile",
                 ));
             }
             copy_profile_tree(&source_profile, &dest_profile)?;
+            stage_profile_module_fallback(&runtime_root, &dsh_home)?;
 
             let expected_link = format!(
                 "link:{}",
@@ -530,6 +537,51 @@ mod imp {
     fn copy_profile_tree(source: &Path, dest: &Path) -> io::Result<()> {
         let skipped = PathBuf::from("node_modules").join("pimp-my-dsh");
         copy_tree(source, source, dest, Some(&skipped))
+    }
+
+    fn stage_profile_module_fallback(runtime_root: &Path, dsh_home: &Path) -> io::Result<()> {
+        let source = runtime_root.join("node_modules");
+        let destination = dsh_home.join("profiles").join("node_modules");
+        std::fs::create_dir_all(&destination)?;
+
+        for entry in std::fs::read_dir(&source)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name_text = name.to_string_lossy();
+            if name_text.starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            if name_text.starts_with('@') {
+                let scope_destination = destination.join(&name);
+                std::fs::create_dir_all(&scope_destination)?;
+                for package in std::fs::read_dir(&path)? {
+                    let package = package?;
+                    link_runtime_package(
+                        &package.path(),
+                        &scope_destination.join(package.file_name()),
+                    )?;
+                }
+            } else {
+                link_runtime_package(&path, &destination.join(&name))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn link_runtime_package(target: &Path, link: &Path) -> io::Result<()> {
+        if !target.join("package.json").is_file() {
+            return Ok(());
+        }
+        symlink_dir(target, link).map_err(|error| {
+            io::Error::other(format!("create private module fallback: {error}"))
+        })?;
+        if std::fs::canonicalize(link)? != std::fs::canonicalize(target)? {
+            return Err(io::Error::other(
+                "private module fallback does not target the staged runtime",
+            ));
+        }
+        Ok(())
     }
 
     fn copy_tree(

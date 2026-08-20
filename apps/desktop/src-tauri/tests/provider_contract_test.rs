@@ -53,11 +53,12 @@ fn dev_provider_uses_the_fixed_argv_contract() {
             "127.0.0.1",
             "--port",
             "0",
+            "--no-open",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect::<Vec<String>>(),
-        "args must be `run --profile web -- --host 127.0.0.1 --port 0` (CLI entry is a separate field, no shell)"
+        "args must be `run --profile web -- --host 127.0.0.1 --port 0 --no-open` (CLI entry is a separate field, no shell)"
     );
 }
 
@@ -91,7 +92,8 @@ fn web_argv_matches_the_provider_contract_shape() {
             "--host",
             "127.0.0.1",
             "--port",
-            "0"
+            "0",
+            "--no-open"
         ]
         .iter()
         .map(|s| s.to_string())

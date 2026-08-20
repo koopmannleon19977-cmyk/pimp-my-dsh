@@ -8,15 +8,24 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::compatibility::{LaunchSpec, Provider};
-use crate::logging::{LogEvent, LogLevel, LogSink, LogSource, register_secret};
+use crate::logging::{LogEvent, LogLevel, LogSink, LogSource, register_secret, sanitize_text};
 use crate::platform::{
     browser,
     job::{ChildGuard, Job},
     pipe::BridgePipe,
+    web_proxy::ControlChannel,
 };
-use crate::protocol::{Frame, construct_endpoint, decode, encode_shutdown};
+#[cfg(all(windows, not(debug_assertions)))]
+use crate::platform::{
+    confinement::Confinement,
+    pipe::AppContainerPipeFactory,
+    web_proxy::{BoundWebProxy, RunningWebProxy},
+};
+use crate::protocol::{Frame, HostFrameEncoder, construct_endpoint, decode};
 use crate::state::State;
-use crate::types::{CompatibilityView, DoctorResult, HealthCheck, HealthStatus, Settings, Snapshot, Theme};
+use crate::types::{
+    CompatibilityView, DoctorResult, HealthCheck, HealthStatus, Settings, Snapshot, Theme,
+};
 
 /// Grace period beyond the upstream 5 s disposal bound.
 const GRACE_TIMEOUT: Duration = Duration::from_secs(6);
@@ -48,7 +57,9 @@ fn health_is_stale(health_at: Option<Instant>, run_start: Option<Instant>, now: 
 
 fn doctor_checks_ok(checks: Option<&[HealthCheck]>) -> bool {
     checks.map_or(true, |checks| {
-        !checks.iter().any(|check| check.status == HealthStatus::Error)
+        !checks
+            .iter()
+            .any(|check| check.status == HealthStatus::Error)
     })
 }
 
@@ -64,6 +75,19 @@ fn active_provider(resource_dir: Option<PathBuf>) -> Box<dyn Provider> {
             resource_dir.unwrap_or_default(),
         ))
     }
+}
+
+#[cfg(all(windows, not(debug_assertions)))]
+fn host_web_profile() -> Result<PathBuf, String> {
+    let home = std::env::var_os("DSH_HOME")
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(|value| PathBuf::from(value).join(".dsh").into_os_string())
+        })
+        .ok_or_else(|| "DSH_HOME and USERPROFILE are unavailable".to_string())?;
+    Ok(PathBuf::from(home).join("profiles").join("web"))
 }
 
 fn log_folder() -> PathBuf {
@@ -176,6 +200,7 @@ enum BridgeEvent {
 struct Resources {
     run_id: Option<String>,
     endpoint: Option<String>,
+    navigation_endpoint: Option<String>,
     uptime_start: Option<Instant>,
     started_at: Option<String>,
     busy: bool,
@@ -204,6 +229,25 @@ pub struct Supervisor {
     resource_dir: Arc<Mutex<Option<PathBuf>>>,
 }
 
+struct RestartAfterRun {
+    supervisor: Arc<Supervisor>,
+    armed: bool,
+}
+
+impl RestartAfterRun {
+    fn arm(&mut self) {
+        self.armed = true;
+    }
+}
+
+impl Drop for RestartAfterRun {
+    fn drop(&mut self) {
+        if self.armed {
+            self.supervisor.maybe_restart();
+        }
+    }
+}
+
 impl Supervisor {
     pub fn new() -> Arc<Self> {
         Arc::new(Supervisor {
@@ -211,6 +255,7 @@ impl Supervisor {
             resources: Arc::new(Mutex::new(Resources {
                 run_id: None,
                 endpoint: None,
+                navigation_endpoint: None,
                 uptime_start: None,
                 started_at: None,
                 busy: false,
@@ -333,7 +378,9 @@ impl Supervisor {
             if !crate::types::state_allows_open(self.state.state()) {
                 return Err("open requires ready/running".to_string());
             }
-            res.endpoint.clone()
+            res.navigation_endpoint
+                .clone()
+                .or_else(|| res.endpoint.clone())
         };
         endpoint.ok_or_else(|| "no validated endpoint".to_string())
     }
@@ -543,7 +590,10 @@ impl Supervisor {
         Ok(())
     }
 
-    pub fn set_restart_policy(self: &Arc<Self>, policy: crate::types::RestartPolicy) -> Result<(), String> {
+    pub fn set_restart_policy(
+        self: &Arc<Self>,
+        policy: crate::types::RestartPolicy,
+    ) -> Result<(), String> {
         {
             let mut res = self.resources.lock().expect("resources lock");
             res.settings.restart_policy = policy;
@@ -580,6 +630,7 @@ impl Supervisor {
         res.uptime_start = None;
         res.started_at = None;
         res.endpoint = None;
+        res.navigation_endpoint = None;
         res.health = Vec::new();
         res.health_at = None;
         res.health_stale = false;
@@ -602,13 +653,16 @@ impl Supervisor {
             (Some(id), Some(ts)) => (id.clone(), ts.clone()),
             _ => return,
         };
-        res.recent_runs.insert(0, crate::types::RunRecord {
-            run_id,
-            started_at,
-            ended_at,
-            outcome,
-            reason,
-        });
+        res.recent_runs.insert(
+            0,
+            crate::types::RunRecord {
+                run_id,
+                started_at,
+                ended_at,
+                outcome,
+                reason,
+            },
+        );
         res.recent_runs.truncate(10);
         // Best-effort persist; the in-memory list is authoritative for the UI.
         let _ = save_runs(&res.recent_runs);
@@ -643,6 +697,12 @@ impl Supervisor {
     /// The full start→run→stop lifecycle, driven on a dedicated thread.
     /// `cancel` is the per-run cancellation token installed by `start()`.
     fn run_lifecycle(self: Arc<Self>, cancel: Arc<AtomicBool>) {
+        // Declared first so it drops last: a restart cannot race this run's
+        // proxy, Job, control pipe, or AppContainer cleanup.
+        let mut restart_after_run = RestartAfterRun {
+            supervisor: Arc::clone(&self),
+            armed: false,
+        };
         // ---- preflight (resolve provider) ----
         let resource_dir = self.resource_dir.lock().expect("resource dir lock").clone();
         let spec: LaunchSpec = match active_provider(resource_dir).resolve() {
@@ -671,12 +731,103 @@ impl Supervisor {
         let pipe_name = format!(r"\\.\pipe\pimp-dsh-{}", random_hex(16));
         register_secret(&token);
 
-        let mut spec = spec;
         let fixed_port = {
             let res = self.resources.lock().expect("resources lock");
             res.settings.fixed_port
         };
-        spec.set_port(fixed_port);
+        #[cfg(all(windows, not(debug_assertions)))]
+        macro_rules! start_fail {
+            ($message:expr) => {{
+                let message = $message;
+                self.log(
+                    LogSource::Lifecycle,
+                    LogLevel::Error,
+                    Some(run_id.clone()),
+                    message,
+                );
+                let _ = self.state.start_failed();
+                self.emit();
+                return;
+            }};
+        }
+        #[cfg(all(windows, not(debug_assertions)))]
+        let (mut spec, confinement, mut bound_proxy, proxy_endpoint, web_pipes) = {
+            let confinement = match Confinement::create() {
+                Ok(value) => value,
+                Err(error) => start_fail!(format!("AppContainer create failed: {error}")),
+            };
+            let staged_runtime = match confinement.stage_runtime(&spec) {
+                Ok(value) => value,
+                Err(error) => start_fail!(format!("runtime confinement staging failed: {error}")),
+            };
+            let profile = match host_web_profile() {
+                Ok(value) => value,
+                Err(error) => start_fail!(format!("managed web profile unavailable: {error}")),
+            };
+            let mut staged = match confinement.stage_web_profile(&profile, &staged_runtime) {
+                Ok(value) => value,
+                Err(error) => {
+                    start_fail!(format!("web profile confinement staging failed: {error}"))
+                }
+            };
+            let bound = match BoundWebProxy::bind(fixed_port.unwrap_or(0)) {
+                Ok(value) => value,
+                Err(error) => start_fail!(format!("confined web proxy bind failed: {error}")),
+            };
+            let proxy_endpoint = bound.bootstrap_url();
+            staged.set_port(Some(bound.port()));
+            let preload = staged.cli_entry.with_file_name("confined-web-transport.js");
+            if !preload.is_file() {
+                start_fail!(format!(
+                    "confined web preload missing from verified runtime: {}",
+                    preload.display()
+                ));
+            }
+            let preload_url = match tauri::Url::from_file_path(&preload) {
+                Ok(value) => value,
+                Err(()) => start_fail!(format!(
+                    "confined web preload path is not a file URL: {}",
+                    preload.display()
+                )),
+            };
+            let Some((_, node_options)) = staged
+                .env
+                .iter_mut()
+                .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("NODE_OPTIONS"))
+            else {
+                start_fail!("confined runtime did not provide NODE_OPTIONS".to_string());
+            };
+            let mut options = node_options.to_string_lossy().into_owned();
+            options.push_str(" --import=");
+            options.push_str(preload_url.as_str());
+            *node_options = std::ffi::OsString::from(options);
+            staged.env.push((
+                std::ffi::OsString::from("DSH_PIMP_CONFINED_WEB"),
+                std::ffi::OsString::from("1"),
+            ));
+            staged.env.push((
+                std::ffi::OsString::from("DSH_PIMP_WEB_PROXY_PORT"),
+                std::ffi::OsString::from(bound.port().to_string()),
+            ));
+            staged.env.push((
+                std::ffi::OsString::from("DSH_PIMP_WEB_ANCHOR_PIPE"),
+                std::ffi::OsString::from(format!(
+                    r"\\.\pipe\LOCAL\pimp-dsh-anchor-{}",
+                    random_hex(16)
+                )),
+            ));
+            let web_pipes = match AppContainerPipeFactory::new(&confinement) {
+                Ok(value) => value,
+                Err(error) => start_fail!(format!("web pipe security failed: {error}")),
+            };
+            (staged, confinement, Some(bound), proxy_endpoint, web_pipes)
+        };
+        #[cfg(not(all(windows, not(debug_assertions))))]
+        let mut spec = {
+            let mut value = spec;
+            value.set_port(fixed_port);
+            value
+        };
         spec.env.push((
             std::ffi::OsString::from("DSH_PIMP_SUPERVISOR_PIPE"),
             std::ffi::OsString::from(&pipe_name),
@@ -691,7 +842,11 @@ impl Supervisor {
         ));
 
         // ---- bridge pipe (before spawn) ----
-        let pipe = match BridgePipe::create(&pipe_name) {
+        #[cfg(all(windows, not(debug_assertions)))]
+        let pipe_result = web_pipes.create(&pipe_name);
+        #[cfg(not(all(windows, not(debug_assertions))))]
+        let pipe_result = BridgePipe::create(&pipe_name);
+        let pipe = match pipe_result {
             Ok(p) => Arc::new(p),
             Err(e) => {
                 self.log(
@@ -707,6 +862,22 @@ impl Supervisor {
         };
 
         // ---- Job + suspended spawn + assign-before-resume ----
+        let encoder = match HostFrameEncoder::new(run_id.clone(), token.clone()) {
+            Ok(value) => value,
+            Err(error) => {
+                self.log(
+                    LogSource::Lifecycle,
+                    LogLevel::Error,
+                    Some(run_id.clone()),
+                    format!("control channel create failed: {error}"),
+                );
+                let _ = self.state.start_failed();
+                self.emit();
+                return;
+            }
+        };
+        let control = Arc::new(ControlChannel::new(Arc::clone(&pipe), encoder));
+
         let job = match Job::new() {
             Ok(j) => j,
             Err(e) => {
@@ -724,7 +895,11 @@ impl Supervisor {
         // RAII guard: if assign/resume fails, the still-suspended child is
         // terminated + waited directly (TerminateJobObject cannot reach an
         // unassigned process). into_inner() disarms only after both succeed.
-        let guard = ChildGuard::new(match job.create_suspended(&spec) {
+        #[cfg(all(windows, not(debug_assertions)))]
+        let spawn_result = job.create_suspended_with(&spec, Some(&confinement));
+        #[cfg(not(all(windows, not(debug_assertions))))]
+        let spawn_result = job.create_suspended(&spec);
+        let guard = ChildGuard::new(match spawn_result {
             Ok(c) => c,
             Err(e) => {
                 self.log(
@@ -771,6 +946,7 @@ impl Supervisor {
                 Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
             res.busy = true;
             res.endpoint = None;
+            res.navigation_endpoint = None;
             res.health = Vec::new();
         }
 
@@ -779,7 +955,7 @@ impl Supervisor {
             pipe.clone(),
             tx.clone(),
             run_id.clone(),
-            token,
+            token.clone(),
             HANDSHAKE_TIMEOUT,
         );
         let mut drains: Vec<std::thread::JoinHandle<()>> = Vec::new();
@@ -801,14 +977,17 @@ impl Supervisor {
                 self.state.clone(),
             ));
         }
-        // Close the child's stdin write end so reads return EOF.
-        drop(child.stdin);
+        // Keep stdin open while the web surface runs; closing it at Ready makes
+        // the pinned DSH web process dispose before serving its first request.
+        let _child_stdin = child.stdin;
 
         // ---- readiness / stop / crash loop ----
         let mut stop_started = false;
         let mut stop_started_at: Option<Instant> = None;
         let mut root_exited = false;
         let mut ready_received = false;
+        #[cfg(all(windows, not(debug_assertions)))]
+        let mut running_proxy: Option<RunningWebProxy> = None;
         let handshake_deadline = Instant::now() + HANDSHAKE_TIMEOUT;
 
         loop {
@@ -823,8 +1002,11 @@ impl Supervisor {
                     Some(run_id.clone()),
                     "sending cooperative shutdown".to_string(),
                 );
-                // Rust→child shutdown frame (sequence 1).
-                let _ = pipe.write_all(&encode_shutdown(1));
+                #[cfg(all(windows, not(debug_assertions)))]
+                if let Some(proxy) = running_proxy.as_mut() {
+                    proxy.stop_and_join();
+                }
+                let _ = control.send_shutdown();
             }
 
             // Root process exited?
@@ -842,13 +1024,20 @@ impl Supervisor {
                         for d in drains.drain(..) {
                             let _ = d.join();
                         }
+                        let outcome = if ready_received {
+                            crate::types::RunOutcome::Crashed
+                        } else {
+                            crate::types::RunOutcome::FailedStart
+                        };
                         self.record_run_end(
-                            crate::types::RunOutcome::Crashed,
+                            outcome,
                             format!("child exited unexpectedly (code {code})"),
                         );
                         self.finish_run(&cancel);
                         self.emit();
-                        self.maybe_restart();
+                        if ready_received {
+                            restart_after_run.arm();
+                        }
                         return;
                     }
                     self.log(
@@ -873,15 +1062,19 @@ impl Supervisor {
             while let Ok(ev) = rx.try_recv() {
                 match ev {
                     BridgeEvent::Ready { endpoint, port } => {
-                        // Fixed-port mismatch is fail-closed: the child must
-                        // report the port it was told to bind.
-                        if let Some(fp) = fixed_port {
-                            if fp != port {
+                        // Release prebinds the proxy even for an ephemeral port;
+                        // debug dynamic mode still validates only explicit fixed ports.
+                        #[cfg(all(windows, not(debug_assertions)))]
+                        let expected_ready_port = bound_proxy.as_ref().map(BoundWebProxy::port);
+                        #[cfg(not(all(windows, not(debug_assertions))))]
+                        let expected_ready_port = fixed_port;
+                        if let Some(expected) = expected_ready_port {
+                            if expected != port {
                                 self.log(
                                     LogSource::Lifecycle,
                                     LogLevel::Error,
                                     Some(run_id.clone()),
-                                    format!("ready reported port {port}, expected fixed {fp}"),
+                                    format!("ready reported port {port}, expected {expected}"),
                                 );
                                 self.reap_job(&job);
                                 for d in drains.drain(..) {
@@ -889,7 +1082,7 @@ impl Supervisor {
                                 }
                                 self.record_run_end(
                                     crate::types::RunOutcome::FailedStart,
-                                    format!("ready reported port {port}, expected fixed {fp}"),
+                                    format!("ready reported port {port}, expected {expected}"),
                                 );
                                 self.finish_run(&cancel);
                                 self.emit();
@@ -914,10 +1107,59 @@ impl Supervisor {
                             );
                             self.finish_run(&cancel);
                             self.emit();
-                            self.maybe_restart();
+                            restart_after_run.arm();
                             return;
                         }
                         ready_received = true;
+                        #[cfg(all(windows, not(debug_assertions)))]
+                        let navigation_endpoint = {
+                            let Some(bound) = bound_proxy.take() else {
+                                self.log(
+                                    LogSource::Lifecycle,
+                                    LogLevel::Error,
+                                    Some(run_id.clone()),
+                                    "confined web proxy was not available at readiness".to_string(),
+                                );
+                                self.reap_job(&job);
+                                for d in drains.drain(..) {
+                                    let _ = d.join();
+                                }
+                                self.record_run_end(
+                                    crate::types::RunOutcome::FailedStart,
+                                    "confined web proxy was not available at readiness".to_string(),
+                                );
+                                self.finish_run(&cancel);
+                                self.emit();
+                                return;
+                            };
+                            let factory = web_pipes.clone();
+                            let proxy = match bound
+                                .start(Arc::clone(&control), move |name| factory.create(name))
+                            {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    self.log(
+                                        LogSource::Lifecycle,
+                                        LogLevel::Error,
+                                        Some(run_id.clone()),
+                                        format!("confined web proxy start failed: {error}"),
+                                    );
+                                    self.reap_job(&job);
+                                    for d in drains.drain(..) {
+                                        let _ = d.join();
+                                    }
+                                    self.record_run_end(
+                                        crate::types::RunOutcome::FailedStart,
+                                        format!("confined web proxy start failed: {error}"),
+                                    );
+                                    self.finish_run(&cancel);
+                                    self.emit();
+                                    return;
+                                }
+                            };
+                            running_proxy = Some(proxy);
+                            proxy_endpoint.clone()
+                        };
                         // Commit the endpoint only AFTER the state machine
                         // accepts readiness (Starting → Ready).
                         if self.state.readiness_received().is_err() {
@@ -942,6 +1184,10 @@ impl Supervisor {
                         {
                             let mut res = self.resources.lock().expect("resources lock");
                             res.endpoint = Some(endpoint.clone());
+                            #[cfg(all(windows, not(debug_assertions)))]
+                            {
+                                res.navigation_endpoint = Some(navigation_endpoint.clone());
+                            }
                             res.busy = false;
                         }
                         let _ = self.state.mark_running();
@@ -979,15 +1225,45 @@ impl Supervisor {
                         );
                     }
                     BridgeEvent::ChildError(msg) => {
+                        let msg = sanitize_text(&msg);
+                        let outcome = if stop_started {
+                            crate::types::RunOutcome::Forced
+                        } else if ready_received {
+                            crate::types::RunOutcome::Crashed
+                        } else {
+                            crate::types::RunOutcome::FailedStart
+                        };
                         self.log(
                             LogSource::Lifecycle,
                             LogLevel::Error,
                             Some(run_id.clone()),
-                            msg,
+                            msg.clone(),
                         );
+                        #[cfg(all(windows, not(debug_assertions)))]
+                        if let Some(proxy) = running_proxy.as_mut() {
+                            proxy.stop_and_join();
+                        }
+                        self.reap_job(&job);
+                        for d in drains.drain(..) {
+                            let _ = d.join();
+                        }
+                        self.record_run_end(outcome, msg);
+                        self.finish_run(&cancel);
+                        self.emit();
+                        if ready_received && !stop_started {
+                            restart_after_run.arm();
+                        }
+                        return;
                     }
                     BridgeEvent::ProtocolFailure(msg) => {
-                        self.record_run_end(crate::types::RunOutcome::Crashed, msg.clone());
+                        let outcome = if stop_started {
+                            crate::types::RunOutcome::Forced
+                        } else if ready_received {
+                            crate::types::RunOutcome::Crashed
+                        } else {
+                            crate::types::RunOutcome::FailedStart
+                        };
+                        self.record_run_end(outcome, msg.clone());
                         self.log(
                             LogSource::Lifecycle,
                             LogLevel::Error,
@@ -1000,7 +1276,9 @@ impl Supervisor {
                         }
                         self.finish_run(&cancel);
                         self.emit();
-                        self.maybe_restart();
+                        if ready_received && !stop_started {
+                            restart_after_run.arm();
+                        }
                         return;
                     }
                     BridgeEvent::Closed => {
@@ -1018,17 +1296,44 @@ impl Supervisor {
                             for d in drains.drain(..) {
                                 let _ = d.join();
                             }
-                        self.record_run_end(
-                            crate::types::RunOutcome::Crashed,
-                            "bridge closed unexpectedly".to_string(),
-                        );
+                            let outcome = if ready_received {
+                                crate::types::RunOutcome::Crashed
+                            } else {
+                                crate::types::RunOutcome::FailedStart
+                            };
+                            self.record_run_end(outcome, "bridge closed unexpectedly".to_string());
                             self.finish_run(&cancel);
                             self.emit();
-                            self.maybe_restart();
+                            if ready_received {
+                                restart_after_run.arm();
+                            }
                             return;
                         }
                     }
                 }
+            }
+
+            #[cfg(all(windows, not(debug_assertions)))]
+            if let Some(fault) = running_proxy.as_ref().and_then(RunningWebProxy::fault) {
+                let message = format!("confined web proxy failed: {fault}");
+                self.log(
+                    LogSource::Lifecycle,
+                    LogLevel::Error,
+                    Some(run_id.clone()),
+                    message.clone(),
+                );
+                if let Some(proxy) = running_proxy.as_mut() {
+                    proxy.stop_and_join();
+                }
+                self.reap_job(&job);
+                for d in drains.drain(..) {
+                    let _ = d.join();
+                }
+                self.record_run_end(crate::types::RunOutcome::Crashed, message);
+                self.finish_run(&cancel);
+                self.emit();
+                restart_after_run.arm();
+                return;
             }
 
             // Health watchdog: once per loop tick, declare the heartbeat stale and
@@ -1368,8 +1673,16 @@ mod tests {
     fn health_watchdog_stale_requires_run_age() {
         let now = Instant::now();
         let start = now;
-        assert!(!health_is_stale(None, Some(start), now + Duration::from_secs(74)));
-        assert!(health_is_stale(None, Some(start), now + Duration::from_secs(76)));
+        assert!(!health_is_stale(
+            None,
+            Some(start),
+            now + Duration::from_secs(74)
+        ));
+        assert!(health_is_stale(
+            None,
+            Some(start),
+            now + Duration::from_secs(76)
+        ));
     }
 
     #[test]

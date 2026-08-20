@@ -1,4 +1,4 @@
-//! Large Windows production-decision gate for opt-in read-side confinement.
+//! Large Windows production gate for authenticated read-side confinement.
 //!
 //! Requires `scripts/stage-runtime.ps1` and an rc.7 managed `web` profile.
 //! Run explicitly:
@@ -7,7 +7,8 @@
 #![cfg(windows)]
 
 use std::ffi::OsString;
-use std::net::{SocketAddr, TcpStream};
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -15,8 +16,9 @@ use std::time::{Duration, Instant};
 use pimp_dsh_desktop::compatibility::{PackagedProvider, Provider};
 use pimp_dsh_desktop::confinement::Confinement;
 use pimp_dsh_desktop::job::{Child, ChildGuard, FileHandle, Job};
-use pimp_dsh_desktop::pipe::BridgePipe;
-use pimp_dsh_desktop::protocol::{Frame, decode, encode_shutdown};
+use pimp_dsh_desktop::pipe::{AppContainerPipeFactory, BridgePipe};
+use pimp_dsh_desktop::protocol::{Frame, HostFrameEncoder, decode};
+use pimp_dsh_desktop::web_proxy::{BoundWebProxy, ControlChannel};
 
 struct Scope {
     confinement: Confinement,
@@ -91,9 +93,38 @@ fn read_framed(pipe: Arc<BridgePipe>, timeout: Duration) -> Result<Vec<u8>, Stri
         .map_err(|_| "bridge frame deadline exceeded".to_string())?
 }
 
+fn http_request(port: u16, request: &str) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to host web proxy");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("bound proxy response wait");
+    stream
+        .write_all(request.as_bytes())
+        .expect("write proxy request");
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => response.extend_from_slice(&chunk[..count]),
+            Err(error)
+                if !response.is_empty()
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+            {
+                break;
+            }
+            Err(error) => panic!("read proxy response: {error}"),
+        }
+    }
+    String::from_utf8_lossy(&response).into_owned()
+}
+
 #[test]
-#[ignore = "large local production-decision gate; requires generated runtime and managed web profile"]
-fn private_real_web_run_reaches_ready_but_zero_capability_loopback_is_blocked() {
+#[ignore = "large local production gate; requires generated runtime and managed web profile"]
+fn private_real_web_run_serves_through_authenticated_host_pipe_proxy() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("runtime")
         .join("manifest.json");
@@ -125,13 +156,41 @@ fn private_real_web_run_reaches_ready_but_zero_capability_loopback_is_blocked() 
         .expect("physicalize managed web profile");
     eprintln!("full-gate: profile staged {:?}", started.elapsed());
 
+    let bound_proxy = BoundWebProxy::bind(0).expect("bind host web proxy");
+    let proxy_port = bound_proxy.port();
+    let bootstrap_url = bound_proxy.bootstrap_url();
+    spec.set_port(Some(proxy_port));
+    let preload = spec.cli_entry.with_file_name("confined-web-transport.js");
+    assert!(
+        preload.is_file(),
+        "confined web preload is missing from staged runtime: {}",
+        preload.display()
+    );
+    let preload_url = tauri::Url::from_file_path(&preload).expect("preload file URL");
+    let (_, node_options) = spec
+        .env
+        .iter_mut()
+        .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("NODE_OPTIONS"))
+        .expect("staged runtime NODE_OPTIONS");
+    let mut options = node_options.to_string_lossy().into_owned();
+    options.push_str(" --import=");
+    options.push_str(preload_url.as_str());
+    *node_options = OsString::from(options);
+    let web_pipes =
+        AppContainerPipeFactory::new(&scope.confinement).expect("create web pipe factory");
+    let proxy_port_text = proxy_port.to_string();
+
     let run_id = format!("confined-full-run-{}", std::process::id());
     let token = "a".repeat(64);
     let pipe_name = format!(r"\\.\pipe\pimp-dsh-confined-full-{}", std::process::id());
+    let anchor_pipe = format!(r"\\.\pipe\LOCAL\pimp-dsh-anchor-{}", "d".repeat(32));
     for (name, value) in [
         ("DSH_PIMP_SUPERVISOR_PIPE", pipe_name.as_str()),
         ("DSH_PIMP_SUPERVISOR_TOKEN", token.as_str()),
         ("DSH_PIMP_SUPERVISOR_RUN_ID", run_id.as_str()),
+        ("DSH_PIMP_CONFINED_WEB", "1"),
+        ("DSH_PIMP_WEB_PROXY_PORT", proxy_port_text.as_str()),
+        ("DSH_PIMP_WEB_ANCHOR_PIPE", anchor_pipe.as_str()),
     ] {
         spec.env.push((OsString::from(name), OsString::from(value)));
     }
@@ -141,6 +200,10 @@ fn private_real_web_run_reaches_ready_but_zero_capability_loopback_is_blocked() 
             .expect("create run-scoped AppContainer pipe"),
     );
     eprintln!("full-gate: pipe created {:?}", started.elapsed());
+    let control = Arc::new(ControlChannel::new(
+        Arc::clone(&pipe),
+        HostFrameEncoder::new(run_id.clone(), token.clone()).expect("host control encoder"),
+    ));
     let job = Job::new().expect("Job::new");
     let guard = ChildGuard::new(
         job.create_suspended_with(&spec, Some(&scope.confinement))
@@ -200,55 +263,112 @@ fn private_real_web_run_reaches_ready_but_zero_capability_loopback_is_blocked() 
     assert_eq!(url, format!("http://127.0.0.1:{port}"));
     eprintln!("full-gate: ready {:?}", started.elapsed());
 
-    let address = SocketAddr::from(([127, 0, 0, 1], port));
-    let loopback_error = TcpStream::connect_timeout(&address, Duration::from_secs(5))
-        .expect_err(
-            "a capability-free AppContainer unexpectedly accepted a loopback connection; revisit the production decision",
+    assert_eq!(port, proxy_port, "ready must advertise the host proxy port");
+    let factory = web_pipes.clone();
+    let mut proxy = bound_proxy
+        .start(Arc::clone(&control), move |name| factory.create(name))
+        .expect("start authenticated host web proxy");
+    let base_url = format!("http://127.0.0.1:{proxy_port}");
+    let bootstrap_path = bootstrap_url
+        .strip_prefix(&base_url)
+        .expect("bootstrap URL uses proxy base");
+    let bootstrap_response = http_request(
+        proxy_port,
+        &format!(
+            "GET {bootstrap_path} HTTP/1.1\r\nHost: 127.0.0.1:{proxy_port}\r\nConnection: close\r\n\r\n"
+        ),
+    );
+    assert!(bootstrap_response.starts_with("HTTP/1.1 303 See Other\r\n"));
+    assert!(bootstrap_response.contains("Referrer-Policy: no-referrer\r\n"));
+    assert!(bootstrap_response.contains("Cache-Control: no-store\r\n"));
+    let cookie = bootstrap_response
+        .lines()
+        .find_map(|line| line.strip_prefix("Set-Cookie: "))
+        .and_then(|value| value.split(';').next())
+        .expect("bootstrap sets the host-only session cookie");
+    let response = http_request(
+        proxy_port,
+        &format!(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:{proxy_port}\r\nCookie: {cookie}\r\nConnection: close\r\n\r\n"
+        ),
+    );
+    if !response.starts_with("HTTP/1.1 200") {
+        let bridge_diagnostic = read_framed(pipe.clone(), Duration::from_secs(1))
+            .map(|bytes| {
+                format!(
+                    "{:?}",
+                    decode(&bytes, &run_id, &token, &mut expected_sequence)
+                )
+            })
+            .unwrap_or_else(|error| error);
+        std::thread::sleep(Duration::from_millis(100));
+        let proxy_diagnostic = proxy
+            .fault()
+            .unwrap_or_else(|| "no proxy fault".to_string());
+        let child_status = child
+            .process
+            .wait_timeout(Duration::from_millis(0))
+            .map(|value| format!("{value:?}"))
+            .unwrap_or_else(|error| error.to_string());
+        panic!(
+            "confined web root did not traverse the authenticated pipe proxy: {response:?}; proxy: {proxy_diagnostic}; bridge: {bridge_diagnostic}; child: {child_status}; {}",
+            terminate_with_output(&job, &child)
         );
-    assert_eq!(
-        loopback_error.raw_os_error(),
-        Some(10061),
-        "the recorded production blocker must be WSAECONNREFUSED, not a later HTTP failure: {loopback_error}"
-    );
+    }
     eprintln!(
-        "full-gate: production blocker confirmed after {:?}: loopback connect to {} failed with {}",
-        started.elapsed(),
-        address,
-        loopback_error
+        "full-gate: authenticated web root reached after {:?}",
+        started.elapsed()
     );
+    proxy.stop_and_join();
 
-    if pipe.write_all(&encode_shutdown(1)).is_ok() {
+    let shutdown_sent = control.send_shutdown().is_ok();
+    if shutdown_sent {
         let mut saw_stopping = false;
+        let mut observed = Vec::new();
         for _ in 0..3 {
             let bytes = match read_framed(pipe.clone(), Duration::from_secs(10)) {
                 Ok(bytes) => bytes,
-                Err(_) => break,
+                Err(error) => {
+                    observed.push(error);
+                    break;
+                }
             };
             match decode(&bytes, &run_id, &token, &mut expected_sequence) {
-                Ok(Frame::Stopping { .. }) => saw_stopping = true,
-                Ok(Frame::Stopped { .. }) => break,
-                Ok(_) => {}
+                Ok(frame @ Frame::Stopping { .. }) => {
+                    observed.push(format!("{frame:?}"));
+                    saw_stopping = true;
+                }
+                Ok(frame @ Frame::Stopped { .. }) => {
+                    observed.push(format!("{frame:?}"));
+                    break;
+                }
+                Ok(frame) => observed.push(format!("{frame:?}")),
                 Err(error) => panic!("invalid shutdown frame: {error}"),
             }
         }
-        assert!(saw_stopping, "child never acknowledged stopping");
+        assert!(
+            saw_stopping,
+            "child never acknowledged stopping; observed {observed:?}"
+        );
+        eprintln!("full-gate: shutdown frames {observed:?}");
         assert!(
             child
                 .process
-                .wait_timeout(Duration::from_secs(8))
+                .wait_timeout(Duration::from_secs(15))
                 .expect("wait for graceful root exit")
                 .is_some(),
             "private root did not exit after shutdown"
         );
     } else {
-        // The zero-capability web run may close itself immediately after its
-        // unreachable Ready endpoint. Reap the complete Job; never adopt/PID-kill.
+        // A control-write failure is terminal: reap the complete Job; never
+        // adopt or PID-kill the confined process.
         let _ = job.terminate();
         let _ = child.process.wait_timeout(Duration::from_secs(3));
     }
     assert!(job.wait_empty(Duration::from_secs(3)).unwrap());
     eprintln!("full-gate: job empty {:?}", started.elapsed());
     pipe.disconnect();
+    drop(control);
     drop(pipe);
     drop(child);
     drop(job);

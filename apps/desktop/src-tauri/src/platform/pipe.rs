@@ -7,12 +7,12 @@ mod imp {
     use std::io;
     use std::os::windows::ffi::OsStrExt;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use crate::platform::confinement::Confinement;
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
-        LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_NO_DATA, ERROR_PIPE_CONNECTED,
+        HANDLE, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -45,7 +45,7 @@ mod imp {
         /// Build a security descriptor DACL: current user + SYSTEM, plus one
         /// optional per-run AppContainer SID. No broad package/capability SID
         /// is admitted.
-        fn new(app_container_sid: Option<PSID>) -> io::Result<Self> {
+        fn new(app_container_sid: Option<&str>) -> io::Result<Self> {
             let mut token: HANDLE = std::ptr::null_mut();
             // SAFETY: token out-param valid; GetCurrentProcess() is a pseudo-handle.
             let ok = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
@@ -85,25 +85,9 @@ mod imp {
                     return Err(error);
                 }
             };
-            let app_container_ace = match app_container_sid {
-                Some(sid) if !sid.is_null() => match sid_string(sid) {
-                    Ok(value) => format!("(A;;GA;;;{value})"),
-                    Err(error) => {
-                        // SAFETY: token valid.
-                        unsafe { CloseHandle(token) };
-                        return Err(error);
-                    }
-                },
-                Some(_) => {
-                    // SAFETY: token valid.
-                    unsafe { CloseHandle(token) };
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "AppContainer SID is null",
-                    ));
-                }
-                None => String::new(),
-            };
+            let app_container_ace = app_container_sid
+                .map(|value| format!("(A;;GA;;;{value})"))
+                .unwrap_or_default();
 
             let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{user_sid_string}){app_container_ace}");
             let sddl_wide: Vec<u16> = OsStr::new(&sddl)
@@ -207,6 +191,24 @@ mod imp {
         }
     }
 
+    /// Cloneable creator retaining only the exact per-run AppContainer SID.
+    #[derive(Clone)]
+    pub struct AppContainerPipeFactory {
+        sid: String,
+    }
+
+    impl AppContainerPipeFactory {
+        pub fn new(confinement: &Confinement) -> io::Result<Self> {
+            Ok(Self {
+                sid: sid_string(confinement.app_container_sid())?,
+            })
+        }
+
+        pub fn create(&self, name: &str) -> io::Result<BridgePipe> {
+            BridgePipe::create_inner(name, Some(&self.sid))
+        }
+    }
+
     /// A first-instance, remote-rejecting named pipe server end.
     pub struct BridgePipe {
         handle: HANDLE,
@@ -224,10 +226,10 @@ mod imp {
         /// Create a pipe admitting exactly one additional per-run
         /// AppContainer SID. The ordinary user+SYSTEM DACL stays unchanged.
         pub fn create_for_appcontainer(name: &str, confinement: &Confinement) -> io::Result<Self> {
-            Self::create_inner(name, Some(confinement.app_container_sid()))
+            AppContainerPipeFactory::new(confinement)?.create(name)
         }
 
-        fn create_inner(name: &str, app_container_sid: Option<PSID>) -> io::Result<Self> {
+        fn create_inner(name: &str, app_container_sid: Option<&str>) -> io::Result<Self> {
             let sec = PipeSecurity::new(app_container_sid)?;
             let name_wide = OsStr::new(name)
                 .encode_wide()
@@ -449,6 +451,180 @@ mod imp {
             Ok(())
         }
 
+        /// Blocking overlapped read used by long-lived web transports. It has
+        /// no idle timeout; [`Self::cancel_io`] is the teardown path.
+        pub fn read_blocking(&self, buf: &mut [u8]) -> io::Result<usize> {
+            self.read_overlapped(buf, None)
+        }
+
+        /// Read exactly `buf.len()` bytes within one total deadline.
+        pub fn read_exact_timeout(&self, buf: &mut [u8], timeout: Duration) -> io::Result<()> {
+            let deadline = Instant::now() + timeout;
+            let mut offset = 0usize;
+            while offset < buf.len() {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "pipe read timed out",
+                    ));
+                }
+                let count = self.read_overlapped(&mut buf[offset..], Some(remaining))?;
+                if count == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "pipe closed before proof",
+                    ));
+                }
+                offset += count;
+            }
+            Ok(())
+        }
+
+        fn read_overlapped(&self, buf: &mut [u8], timeout: Option<Duration>) -> io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            // SAFETY: unnamed event with default security.
+            let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+            if event.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+            overlapped.hEvent = event;
+            // SAFETY: handle, buffer, and OVERLAPPED remain valid through the wait.
+            let ok = unsafe {
+                ReadFile(
+                    self.handle,
+                    buf.as_mut_ptr(),
+                    buf.len().min(u32::MAX as usize) as u32,
+                    std::ptr::null_mut(),
+                    &mut overlapped,
+                )
+            };
+            if ok == 0 {
+                let error = io::Error::last_os_error();
+                let code = error.raw_os_error();
+                if matches!(
+                    code,
+                    Some(value)
+                        if value == ERROR_BROKEN_PIPE as i32 || value == ERROR_NO_DATA as i32
+                ) {
+                    // SAFETY: no pending operation owns the event.
+                    unsafe { CloseHandle(event) };
+                    return Ok(0);
+                }
+                if code != Some(ERROR_IO_PENDING as i32) {
+                    // SAFETY: no pending operation owns the event.
+                    unsafe { CloseHandle(event) };
+                    return Err(error);
+                }
+            }
+            let wait_ms = timeout
+                .map(|value| value.as_millis().min(u32::MAX as u128) as u32)
+                .unwrap_or(INFINITE);
+            // SAFETY: event and OVERLAPPED remain valid until completion/cancellation.
+            let wait = unsafe { WaitForSingleObject(event, wait_ms) };
+            if wait == WAIT_TIMEOUT {
+                // SAFETY: cancel and join before releasing stack-backed state.
+                unsafe {
+                    CancelIoEx(self.handle, &overlapped);
+                    WaitForSingleObject(event, INFINITE);
+                    CloseHandle(event);
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "pipe read timed out",
+                ));
+            }
+            if wait != WAIT_OBJECT_0 {
+                // SAFETY: cancel and join before releasing stack-backed state.
+                unsafe {
+                    CancelIoEx(self.handle, &overlapped);
+                    WaitForSingleObject(event, INFINITE);
+                    CloseHandle(event);
+                }
+                return Err(io::Error::last_os_error());
+            }
+            let mut transferred = 0u32;
+            // SAFETY: operation completed and out-param is valid.
+            let result =
+                if unsafe { GetOverlappedResult(self.handle, &overlapped, &mut transferred, 0) }
+                    == 0
+                {
+                    let error = io::Error::last_os_error();
+                    if matches!(
+                        error.raw_os_error(),
+                        Some(code)
+                            if code == ERROR_BROKEN_PIPE as i32 || code == ERROR_NO_DATA as i32
+                    ) {
+                        Ok(0)
+                    } else {
+                        Err(error)
+                    }
+                } else {
+                    Ok(transferred as usize)
+                };
+            // SAFETY: operation is complete.
+            unsafe { CloseHandle(event) };
+            result
+        }
+
+        /// Blocking, backpressured write used by long-lived web transports.
+        pub fn write_all_blocking(&self, buf: &[u8]) -> io::Result<()> {
+            let mut offset = 0usize;
+            while offset < buf.len() {
+                // SAFETY: unnamed event with default security.
+                let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+                if event.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+                overlapped.hEvent = event;
+                let len = (buf.len() - offset).min(u32::MAX as usize) as u32;
+                // SAFETY: handle, buffer, and OVERLAPPED remain valid through the wait.
+                let ok = unsafe {
+                    WriteFile(
+                        self.handle,
+                        buf[offset..].as_ptr(),
+                        len,
+                        std::ptr::null_mut(),
+                        &mut overlapped,
+                    )
+                };
+                if ok == 0
+                    && io::Error::last_os_error().raw_os_error() != Some(ERROR_IO_PENDING as i32)
+                {
+                    let error = io::Error::last_os_error();
+                    // SAFETY: no pending operation owns the event.
+                    unsafe { CloseHandle(event) };
+                    return Err(error);
+                }
+                // SAFETY: event and OVERLAPPED remain valid until completion/cancellation.
+                unsafe { WaitForSingleObject(event, INFINITE) };
+                let mut transferred = 0u32;
+                // SAFETY: operation completed and out-param is valid.
+                if unsafe { GetOverlappedResult(self.handle, &overlapped, &mut transferred, 0) }
+                    == 0
+                {
+                    let error = io::Error::last_os_error();
+                    // SAFETY: operation is complete.
+                    unsafe { CloseHandle(event) };
+                    return Err(error);
+                }
+                // SAFETY: operation is complete.
+                unsafe { CloseHandle(event) };
+                offset += transferred as usize;
+            }
+            Ok(())
+        }
+
+        /// Wake every pending overlapped operation during proxy teardown.
+        pub fn cancel_io(&self) {
+            // SAFETY: handle is valid; null OVERLAPPED selects all operations.
+            unsafe { CancelIoEx(self.handle, std::ptr::null()) };
+        }
+
         pub fn disconnect(&self) {
             // SAFETY: handle valid; best-effort disconnect.
             unsafe { DisconnectNamedPipe(self.handle) };
@@ -469,9 +645,22 @@ mod imp {
 mod imp {
     use crate::platform::confinement::Confinement;
     use std::io;
+    use std::time::Duration;
 
     pub struct BridgePipe {
         name: String,
+    }
+
+    #[derive(Clone)]
+    pub struct AppContainerPipeFactory;
+
+    impl AppContainerPipeFactory {
+        pub fn new(_confinement: &Confinement) -> io::Result<Self> {
+            Err(unsupported())
+        }
+        pub fn create(&self, _name: &str) -> io::Result<BridgePipe> {
+            Err(unsupported())
+        }
     }
 
     impl BridgePipe {
@@ -502,6 +691,16 @@ mod imp {
         pub fn write_all(&self, _buf: &[u8]) -> io::Result<()> {
             Err(unsupported())
         }
+        pub fn read_blocking(&self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(unsupported())
+        }
+        pub fn read_exact_timeout(&self, _buf: &mut [u8], _timeout: Duration) -> io::Result<()> {
+            Err(unsupported())
+        }
+        pub fn write_all_blocking(&self, _buf: &[u8]) -> io::Result<()> {
+            Err(unsupported())
+        }
+        pub fn cancel_io(&self) {}
         pub fn disconnect(&self) {}
     }
 

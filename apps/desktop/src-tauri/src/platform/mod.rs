@@ -9,3 +9,4 @@ pub mod browser;
 pub mod confinement;
 pub mod job;
 pub mod pipe;
+pub mod web_proxy;

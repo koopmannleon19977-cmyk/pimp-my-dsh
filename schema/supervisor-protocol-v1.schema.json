@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/koopmannleon19977-cmyk/pimp-my-dsh/schema/supervisor-protocol-v1.schema.json",
   "title": "pimp-my-dsh desktop supervisor child-bridge protocol",
-  "description": "A single decoded length-prefixed frame of the desktop supervisor child bridge. Frames are UTF-8 JSON bodies (max 64 KiB) preceded by a 4-byte little-endian unsigned length prefix. Every object is closed: unknown fields are rejected. Common fields are protocolVersion, type, runId, token, and sequence; the Rust-to-child shutdown frame carries only protocolVersion, type, and sequence.",
+  "description": "A single decoded length-prefixed frame of the desktop supervisor child bridge. Frames are UTF-8 JSON bodies (max 64 KiB) preceded by a 4-byte little-endian unsigned length prefix. Every object is closed: unknown fields are rejected. Both directions authenticate runId and token and own independent strictly increasing sequence counters.",
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/hello" },
@@ -11,7 +11,8 @@
     { "$ref": "#/$defs/stopping" },
     { "$ref": "#/$defs/stopped" },
     { "$ref": "#/$defs/error" },
-    { "$ref": "#/$defs/shutdown" }
+    { "$ref": "#/$defs/shutdown" },
+    { "$ref": "#/$defs/webAccept" }
   ],
   "$defs": {
     "protocolVersion": { "const": 1 },
@@ -134,11 +135,27 @@
     "shutdown": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["protocolVersion", "type", "sequence"],
+      "required": ["protocolVersion", "type", "runId", "token", "sequence"],
       "properties": {
         "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
         "type": { "const": "shutdown" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "token": { "$ref": "#/$defs/token" },
         "sequence": { "$ref": "#/$defs/sequence" }
+      }
+    },
+    "webAccept": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "type", "runId", "token", "sequence", "pipeName", "connectionToken"],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "type": { "const": "web-accept" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "token": { "$ref": "#/$defs/token" },
+        "sequence": { "$ref": "#/$defs/sequence" },
+        "pipeName": { "type": "string", "pattern": "^[\\\\][\\\\][.][\\\\]pipe[\\\\]pimp-dsh-web-[0-9a-f]{32}$" },
+        "connectionToken": { "$ref": "#/$defs/token" }
       }
     }
   }

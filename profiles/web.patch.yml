@@ -1,1 +1,11 @@
-[]
+# Web profiles keep credential/settings writes but disable chokidar path
+# canonicalization, which is incompatible with AppContainer private roots.
+- id: credentials
+  config:
+    watch: false
+    debounceMs: 100
+
+- id: settings
+  config:
+    watch: false
+    debounceMs: 100

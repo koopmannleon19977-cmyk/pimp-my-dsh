@@ -41,16 +41,17 @@ pub struct LaunchSpec {
 }
 
 impl LaunchSpec {
-    /// Rewrite the trailing `--port` value to a validated fixed port, or `0`
-    /// (dynamic) when `None` or out of range.
+    /// Rewrite the `--port` value to a validated fixed port, or `0` (dynamic)
+    /// when `None` or out of range.
     pub fn set_port(&mut self, port: Option<u16>) {
-        if self.args.len() >= 2 && self.args[self.args.len() - 2] == "--port" {
-            let value = match port {
-                Some(p) if (1..=65535).contains(&p) => p.to_string(),
-                _ => "0".to_string(),
-            };
-            let last = self.args.len() - 1;
-            self.args[last] = OsString::from(value);
+        let value = match port {
+            Some(port) if (1..=65535).contains(&port) => port.to_string(),
+            _ => "0".to_string(),
+        };
+        if let Some(index) = self.args.iter().position(|argument| argument == "--port")
+            && let Some(argument) = self.args.get_mut(index + 1)
+        {
+            *argument = OsString::from(value);
         }
     }
 }
@@ -66,6 +67,7 @@ pub fn web_argv() -> Vec<OsString> {
         "127.0.0.1",
         "--port",
         "0",
+        "--no-open",
     ]
     .iter()
     .map(OsString::from)
@@ -324,6 +326,7 @@ mod tests {
         assert_eq!(argv[5], "127.0.0.1");
         assert_eq!(argv[6], "--port");
         assert_eq!(argv[7], "0");
+        assert_eq!(argv[8], "--no-open");
         // No shell tokens, no remote host, no PATH fallback marker.
         assert!(
             !argv

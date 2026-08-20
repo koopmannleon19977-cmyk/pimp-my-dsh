@@ -229,7 +229,7 @@ Before any process is created, the provider verifies:
 ```
 {schemaVersion:1, protocolVersion:1, controllerVersion:'0.1.0',
  node:{version:'24.19.0', sha256}, pnpmVersion:'11.7.0',
- distributionVersion:'0.1.0', dshVersion:'0.1.0-rc.6',
+ distributionVersion:'0.1.0', dshVersion:'0.1.0-rc.7',
  target:'x86_64-pc-windows-msvc', payloadSha256}
 ```
 
@@ -249,14 +249,19 @@ authenticated pipe:
 - **Token:** 64 lowercase hex chars, memory-only, per-run random
 - **Sequence:** strictly increases per authenticated connection
 - **Child to Rust types:** `hello`, `ready`, `health`, `stopping`, `stopped`, `error`
-- **Rust to child:** `shutdown`
+- **Rust to child:** authenticated, independently sequenced `shutdown` and
+  `web-accept` (the latter carries a host-created pipe name and connection token)
 
 On `ready`, the child sends additional fields: `{profile:'web', host:'127.0.0.1',
 port:1..65535, url:'http://127.0.0.1:<port>', distributionVersion:'0.1.0',
-dshVersion:'0.1.0-rc.6'}`. Rust authenticates token/run/version/sequence before
+dshVersion:'0.1.0-rc.7'}`. Rust authenticates token/run/version/sequence before
 type-specific parsing and constructs the endpoint itself from host+port. A
 supplied URL must exactly equal the normalized result but never becomes
 authority.
+For a packaged confined run, `ready.port` must equal the already-bound host
+proxy port. Each data-pipe client proves receipt of its authenticated
+`web-accept` by writing the connection token; Rust verifies it before forwarding
+browser bytes.
 
 On `health` (sent every 30 s), the child sends `{checks:[{id,status,message}]}`;
 the controller stores them verbatim in `snapshot.health` for the lobby's health
