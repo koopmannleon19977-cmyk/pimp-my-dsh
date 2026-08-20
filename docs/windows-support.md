@@ -128,8 +128,10 @@ The rc.7 component gate
 release-behavior Supervisor gate
 `packaged_supervisor_serves_and_stops_the_confined_web_run` both pass. Together
 they cover HTTP 200, private/public endpoint separation, graceful shutdown,
-empty Job, history outcome, and per-run profile removal. The actual packaged
-WebView2 redirect/cookie/navigation path remains a manual smoke. Startup and
+empty Job, history outcome, and per-run profile removal. A packaged desktop
+smoke additionally verified the real WebView2 path: the embedded harness
+window rendered the rc.7 UI after the private bootstrap 303 and cookie, and
+the graceful UI stop removed the per-run AppContainer profile. Startup and
 transport failures never fall back to an unconfined desktop child.
 
 This boundary does not apply to direct `pimp-dsh run`, and it does not make

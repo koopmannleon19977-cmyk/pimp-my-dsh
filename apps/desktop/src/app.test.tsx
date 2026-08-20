@@ -168,6 +168,7 @@ describe("DSH Supervisor control surface", () => {
         modelConfigured: true,
         lspEnabled: null,
         telemetryEnabled: null,
+        sandboxChecks: null,
       },
     }));
     expect(screen.getAllByText("Pinned Node hash did not match.")[0]).toBeVisible();
@@ -272,6 +273,7 @@ describe("DSH Supervisor control surface", () => {
           modelConfigured: true,
           lspEnabled: null,
           telemetryEnabled: null,
+          sandboxChecks: null,
         },
       }));
     });

@@ -105,7 +105,10 @@ no-fork decision.
         `packaged_supervisor_serves_and_stops_the_confined_web_run`: the real
         `Supervisor::run_lifecycle` kept the bootstrap URL private, served the
         rc.7 root, stopped gracefully, and cleared endpoint authority.
-        WebView2 redirect/cookie behavior remains a manual packaged-app smoke.
+        WebView2 redirect/cookie/navigation was verified in a packaged
+        desktop smoke: the real rc.7 harness UI rendered in the embedded
+        window after the private bootstrap 303, and no bootstrap marker or
+        configured secret appeared in persisted surfaces.
 - [x] Add a machine-readable community-plugin review checklist artifact that
       the reviewed allowlist gate consumes (`schema/community-plugin-allowlist-v1`).
 - [x] Add `doctor` checks for the Windows sandbox boundaries (volume

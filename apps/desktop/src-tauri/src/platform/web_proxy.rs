@@ -361,14 +361,14 @@ fn copy_duplex(mut tcp: TcpStream, pipe: Arc<BridgePipe>) -> io::Result<()> {
             loop {
                 let count = match read_pipe.read_blocking(&mut buf) {
                     Ok(value) => value,
-                    Err(error) if connection_closed(&error) => return Ok(()),
+                    Err(error) if connection_local(&error) => return Ok(()),
                     Err(error) => return Err(error),
                 };
                 if count == 0 {
                     return Ok::<(), io::Error>(());
                 }
                 if let Err(error) = pipe_to_tcp.write_all(&buf[..count]) {
-                    if connection_closed(&error) {
+                    if connection_local(&error) {
                         return Ok(());
                     }
                     return Err(error);
@@ -385,14 +385,14 @@ fn copy_duplex(mut tcp: TcpStream, pipe: Arc<BridgePipe>) -> io::Result<()> {
             Ok(0) => break Ok(()),
             Ok(count) => {
                 if let Err(error) = pipe.write_all_blocking(&buf[..count]) {
-                    break if connection_closed(&error) {
+                    break if connection_local(&error) {
                         Ok(())
                     } else {
                         Err(error)
                     };
                 }
             }
-            Err(error) if connection_closed(&error) => break Ok(()),
+            Err(error) if connection_local(&error) => break Ok(()),
             Err(error) => break Err(error),
         }
     };
@@ -416,6 +416,16 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 
 fn connection_rejected(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::PermissionDenied
+}
+
+/// A per-connection termination that must not kill the whole proxy. Copy-phase
+/// timeouts are local peer behavior; only the data-pipe connect timeout is a
+/// proxy/child infrastructure fault that remains terminal.
+fn connection_local(error: &io::Error) -> bool {
+    connection_closed(error)
+        || connection_rejected(error)
+        || (error.kind() == io::ErrorKind::TimedOut
+            && !error.to_string().starts_with("connect data pipe"))
 }
 
 fn connection_closed(error: &io::Error) -> bool {
@@ -543,6 +553,8 @@ mod tests {
         assert!(!connection_rejected(&io::Error::from(
             io::ErrorKind::TimedOut
         )));
+        assert!(connection_local(&io::Error::from(io::ErrorKind::TimedOut)));
+        assert!(connection_local(&io::Error::from_raw_os_error(10060)));
         assert!(constant_time_eq(&[0xaa; 64], &[0xaa; 64]));
         assert!(!constant_time_eq(&[0xaa; 64], &[0xab; 64]));
         assert!(!constant_time_eq(&[0xaa; 63], &[0xaa; 64]));

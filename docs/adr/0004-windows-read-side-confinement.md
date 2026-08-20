@@ -88,9 +88,12 @@ Two ignored local gates cover different seams:
   the public-base/private-navigation split, rc.7 root response, graceful stop,
   run-history outcome, and cleared endpoint authority.
 
-The automated gates do not launch the packaged Tauri WebView2 window. Its 303
-redirect/cookie application and actual `open_harness_window` navigation remain
-a manual packaged-app smoke rather than an automated claim.
+The automated gates do not launch the packaged Tauri WebView2 window. A
+manual packaged desktop smoke verified that flow end to end: after the
+release run reached `Running`, the embedded harness window rendered the real
+rc.7 UI (including its testing-notice acknowledgement), the private bootstrap
+303/cookie worked over WebView2, and a graceful UI stop emptied the Job and
+removed the per-run AppContainer profile.
 
 ## Consequences
 
