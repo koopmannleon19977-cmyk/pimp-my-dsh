@@ -43,6 +43,24 @@ fn distinct_names_do_not_collide() {
 }
 
 #[test]
+fn connect_timeout_is_bounded_without_a_client() {
+    let name = format!(
+        r"\\.\pipe\pimp-dsh-test-pipe-timeout-{}",
+        std::process::id()
+    );
+    let pipe = BridgePipe::create(&name).expect("create pipe");
+    let started = Instant::now();
+    let error = pipe
+        .connect_timeout(Duration::from_millis(100))
+        .expect_err("no client must time out");
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "overlapped connect timeout must not block the caller"
+    );
+}
+
+#[test]
 fn pending_read_does_not_delay_duplex_shutdown_write() {
     let name = format!(r"\\.\pipe\pimp-dsh-test-pipe-duplex-{}", std::process::id());
     let pipe = Arc::new(BridgePipe::create(&name).expect("create pipe"));

@@ -380,6 +380,53 @@ describe("CLI contract (built dist)", () => {
       expect(b.status).toBe(0);
       expect(a.stdout).toBe(b.stdout);
     });
+
+    it("accepts --runtime-only as structured, host-probe-free output", () => {
+      const home = makeTempDir();
+      const r = runCli(["doctor", "--json", "--runtime-only"], {
+        DSH_HOME: home,
+        PIMP_DSH_ENABLE_BROWSER: "1",
+      });
+      expect(r.status).toBe(0);
+      const parsed = JSON.parse(r.stdout);
+      expect(parsed.schemaVersion).toBe(1);
+      expect(parsed.command).toBe("doctor");
+      expect(typeof parsed.version).toBe("string");
+      expect(typeof parsed.node).toBe("string");
+      expect(parsed.sandboxChecks).toBeNull();
+    });
+
+    it("keeps runtime-only output schema-aligned with default doctor", () => {
+      const home = makeTempDir();
+      const env = { DSH_HOME: home, PIMP_DSH_ENABLE_BROWSER: "0" };
+      const defaultDoctor = JSON.parse(runCli(["doctor", "--json"], env).stdout);
+      const runtimeOnly = JSON.parse(runCli(["doctor", "--json", "--runtime-only"], env).stdout);
+      const defaultKeys = Object.keys(defaultDoctor).sort();
+      const runtimeKeys = Object.keys(runtimeOnly).sort();
+      // Only sandboxChecks may differ: default runs host probes, runtime-only omits them.
+      expect(runtimeKeys).toEqual(defaultKeys);
+      for (const key of defaultKeys) {
+        if (key === "sandboxChecks") continue;
+        expect(runtimeOnly[key]).toEqual(defaultDoctor[key]);
+      }
+      expect(runtimeOnly.sandboxChecks).toBeNull();
+    });
+
+    it.runIf(process.platform === "win32")("skips sandbox probes where default doctor still runs them", () => {
+      const home = makeTempDir();
+      const env = { DSH_HOME: home, PIMP_DSH_ENABLE_BROWSER: "1" };
+      const defaultChecks = JSON.parse(runCli(["doctor", "--json"], env).stdout).sandboxChecks;
+      expect(Array.isArray(defaultChecks)).toBe(true);
+      const runtimeOnly = JSON.parse(runCli(["doctor", "--json", "--runtime-only"], env).stdout);
+      expect(runtimeOnly.sandboxChecks).toBeNull();
+    });
+
+    it("rejects --runtime-only outside doctor", () => {
+      const home = makeTempDir();
+      const r = runCli(["setup", "--profile", "web", "--runtime-only", "--json"], { DSH_HOME: home });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain("unknown argument: --runtime-only");
+    });
   });
 
   describe("update-check: no mutation and no telemetry", () => {

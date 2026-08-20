@@ -1,6 +1,6 @@
 # ADR-0004: Keep Windows read-side confinement as a native follow-up
 
-- **Status:** Prototype complete — production integration deferred
+- **Status:** Production no-go — zero-capability loopback transport blocked
 - **Date:** 2026-08-19
 - **Deciders:** `pimp-my-dsh` maintainers
 
@@ -33,13 +33,12 @@ Do not ship a fake read-only mode or silently mutate broad host ACLs. Keep the
 current write-only enforcement and make the missing capability explicit:
 
 - `doctor` continues to report `read-side-confinement` as `unavailable`.
-- The production roadmap item remains open until the native path covers the
-  real Node payload, managed profile, harness home, workspace, and private
-  temporary directory.
-- Tool approval hooks and path checks may remain defense-in-depth, but they are
-  not counted as OS read confinement.
-- A native child launch must fail closed if its AppContainer identity cannot be
-  created, configured, or attached before the child resumes.
+- No desktop opt-in setting is shipped: the authenticated private run reaches
+  `ready`, but its loopback endpoint is unreachable from the supervisor.
+- Tool approval hooks and path checks remain defense-in-depth; they are not
+  counted as OS read confinement.
+- A native child launch must fail closed if its AppContainer identity, private
+  staging, authenticated pipe, or endpoint cannot be established.
 
 ## Completed native prototype
 
@@ -54,17 +53,37 @@ stdio handle list before `CreateProcessW`. It retains the suspended
 create → Job assignment → `ResumeThread` ordering. The existing
 `create_suspended` remains the production default, so the prototype is opt-in.
 
-`tests/confinement_contract_test.rs` executes the prototype on Windows:
+The Windows contract matrix now covers:
 
-1. a unique AppContainer profile is created without elevation;
-2. the staged child reads a fixture file in its private profile root;
-3. that same child is denied a caller-readable file outside the root;
-4. normal cleanup removes the private root and deletes the profile;
-5. a missing staged child fails before resume and its profile is removed.
+1. a unique AppContainer profile without elevation or capability SIDs;
+2. allowed private-root reads and denial of caller-profile reads;
+3. hard-link and junction aliases into external roots;
+4. assign-before-resume, root crash, descendant Job containment, and teardown;
+5. authenticated source/destination runtime manifests and physicalized pnpm
+   hard links;
+6. real Node 24.19.0 / DSH 0.1.0-rc.7 `help` and
+   `doctor --json --runtime-only`;
+7. a physicalized rc.7 managed `web` profile with private DSH home, workspace,
+   application data, and temporary paths;
+8. normal, failed-startup, crash, read-only-file, and large-profile cleanup.
 
-This satisfies the prototype boundary without claiming production confinement.
-It does not yet stage and grant the real Node payload, DSH home, workspace,
-temp directory, hard links, junctions, crashes, or descendant processes.
+## Production decision gate
+
+`tests/full_run_confinement_contract_test.rs` executes the complete private
+web run. On Windows 11 it proves:
+
+- the per-run AppContainer SID is admitted to the otherwise user+SYSTEM named
+  pipe;
+- the child connects and sends authenticated protocol-v1 `hello` and `ready`;
+- `ready` advertises a valid `127.0.0.1` dynamic endpoint;
+- the external supervisor cannot connect to that endpoint
+  (`WSAECONNREFUSED` / OS error 10061);
+- the Job is reaped and the profile root is removed within the bounded cleanup.
+
+Adding Internet/private-network capability SIDs or a machine-wide loopback
+exemption would violate the zero-network boundary. Therefore the prototype is
+not wired into `Supervisor::run_lifecycle`, no renderer toggle is exposed, and
+the ordinary launcher remains the default.
 
 ## Consequences
 
@@ -73,6 +92,7 @@ malicious model or plugin can still read caller-readable files on Windows. The
 native work is isolated from the verified CLI hardening commit, so it can be
 reviewed and tested without weakening the shipped default.
 
-Revisit when a native helper can satisfy the prototype matrix on Windows 10/11
-without broad persistent ACL changes, or when upstream ships a supported
-read-capable sandbox seam.
+Revisit only when Windows offers a narrowly scoped, per-run loopback transport
+that does not grant general network access, when the product replaces HTTP
+loopback with an authenticated non-network transport, or when upstream ships a
+supported read-capable sandbox seam.

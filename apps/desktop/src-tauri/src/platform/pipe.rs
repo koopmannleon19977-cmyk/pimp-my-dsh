@@ -9,6 +9,7 @@ mod imp {
     use std::thread;
     use std::time::Duration;
 
+    use crate::platform::confinement::Confinement;
     use windows_sys::Win32::Foundation::{
         CloseHandle, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
         LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
@@ -17,32 +18,34 @@ mod imp {
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
     };
     use windows_sys::Win32::Security::{
-        GetTokenInformation, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        GetTokenInformation, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
+        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, ReadFile,
+        WriteFile,
     };
-    use windows_sys::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
+    use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
     use windows_sys::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
         PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
         PeekNamedPipe,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateEventW, GetCurrentProcess, OpenProcessToken, WaitForSingleObject,
+        CreateEventW, GetCurrentProcess, INFINITE, OpenProcessToken, WaitForSingleObject,
     };
 
     /// Owns the security resources backing the pipe DACL until the pipe exists.
     struct PipeSecurity {
         sa: SECURITY_ATTRIBUTES,
         psd: *mut core::ffi::c_void,
-        sid_str: windows_sys::core::PWSTR,
         token: HANDLE,
     }
 
     impl PipeSecurity {
-        /// Build a security descriptor DACL: current user + SYSTEM, deny others.
-        fn new() -> io::Result<Self> {
+        /// Build a security descriptor DACL: current user + SYSTEM, plus one
+        /// optional per-run AppContainer SID. No broad package/capability SID
+        /// is admitted.
+        fn new(app_container_sid: Option<PSID>) -> io::Result<Self> {
             let mut token: HANDLE = std::ptr::null_mut();
             // SAFETY: token out-param valid; GetCurrentProcess() is a pseudo-handle.
             let ok = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
@@ -66,27 +69,43 @@ mod imp {
                 )
             };
             if ok == 0 {
-                let e = io::Error::last_os_error();
+                let error = io::Error::last_os_error();
                 // SAFETY: token valid.
                 unsafe { CloseHandle(token) };
-                return Err(e);
+                return Err(error);
             }
-            let tu = buf.as_ptr() as *const TOKEN_USER;
-            // SAFETY: tu points to a valid TOKEN_USER of `size` bytes.
-            let sid = unsafe { (*tu).User.Sid };
+            let token_user = buf.as_ptr() as *const TOKEN_USER;
+            // SAFETY: token_user points to a valid TOKEN_USER of `size` bytes.
+            let user_sid = unsafe { (*token_user).User.Sid };
+            let user_sid_string = match sid_string(user_sid) {
+                Ok(value) => value,
+                Err(error) => {
+                    // SAFETY: token valid.
+                    unsafe { CloseHandle(token) };
+                    return Err(error);
+                }
+            };
+            let app_container_ace = match app_container_sid {
+                Some(sid) if !sid.is_null() => match sid_string(sid) {
+                    Ok(value) => format!("(A;;GA;;;{value})"),
+                    Err(error) => {
+                        // SAFETY: token valid.
+                        unsafe { CloseHandle(token) };
+                        return Err(error);
+                    }
+                },
+                Some(_) => {
+                    // SAFETY: token valid.
+                    unsafe { CloseHandle(token) };
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "AppContainer SID is null",
+                    ));
+                }
+                None => String::new(),
+            };
 
-            let mut sid_str: windows_sys::core::PWSTR = std::ptr::null_mut();
-            // SAFETY: sid is a valid SID; sid_str out-param valid.
-            let ok = unsafe { ConvertSidToStringSidW(sid, &mut sid_str) };
-            if ok == 0 {
-                let e = io::Error::last_os_error();
-                // SAFETY: token valid.
-                unsafe { CloseHandle(token) };
-                return Err(e);
-            }
-
-            let sid_string = read_wide(sid_str);
-            let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{sid_string})");
+            let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{user_sid_string}){app_container_ace}");
             let sddl_wide: Vec<u16> = OsStr::new(&sddl)
                 .encode_wide()
                 .chain(std::iter::once(0))
@@ -102,13 +121,10 @@ mod imp {
                 )
             };
             if ok == 0 {
-                let e = io::Error::last_os_error();
-                // SAFETY: token + sid_str valid.
-                unsafe {
-                    CloseHandle(token);
-                    LocalFree(sid_str as *mut core::ffi::c_void);
-                }
-                return Err(e);
+                let error = io::Error::last_os_error();
+                // SAFETY: token valid.
+                unsafe { CloseHandle(token) };
+                return Err(error);
             }
 
             let mut sa: SECURITY_ATTRIBUTES = unsafe { std::mem::zeroed() };
@@ -116,12 +132,7 @@ mod imp {
             sa.lpSecurityDescriptor = psd;
             sa.bInheritHandle = 0;
 
-            Ok(PipeSecurity {
-                sa,
-                psd,
-                sid_str,
-                token,
-            })
+            Ok(PipeSecurity { sa, psd, token })
         }
     }
 
@@ -132,14 +143,23 @@ mod imp {
                 if !self.psd.is_null() {
                     LocalFree(self.psd);
                 }
-                if !self.sid_str.is_null() {
-                    LocalFree(self.sid_str as *mut core::ffi::c_void);
-                }
                 if !self.token.is_null() {
                     CloseHandle(self.token);
                 }
             }
         }
+    }
+
+    fn sid_string(sid: PSID) -> io::Result<String> {
+        let mut value: windows_sys::core::PWSTR = std::ptr::null_mut();
+        // SAFETY: sid is valid for this call; value is a LocalFree allocation.
+        if unsafe { ConvertSidToStringSidW(sid, &mut value) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let string = read_wide(value);
+        // SAFETY: ConvertSidToStringSidW allocated value.
+        unsafe { LocalFree(value as *mut core::ffi::c_void) };
+        Ok(string)
     }
 
     fn read_wide(ptr: windows_sys::core::PWSTR) -> String {
@@ -160,6 +180,33 @@ mod imp {
         s
     }
 
+    fn wait_overlapped(
+        handle: HANDLE,
+        overlapped: &OVERLAPPED,
+        event: HANDLE,
+        timeout: Duration,
+    ) -> io::Result<u32> {
+        let milliseconds = (timeout.as_millis().min(u32::MAX as u128)) as u32;
+        // SAFETY: event and OVERLAPPED remain valid for the duration of this call.
+        match unsafe { WaitForSingleObject(event, milliseconds) } {
+            WAIT_OBJECT_0 => {
+                let mut transferred = 0u32;
+                // SAFETY: the event signaled completion; this is non-blocking.
+                let ok = unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 0) };
+                if ok == 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(transferred)
+                }
+            }
+            WAIT_TIMEOUT => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "pipe I/O timed out",
+            )),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
     /// A first-instance, remote-rejecting named pipe server end.
     pub struct BridgePipe {
         handle: HANDLE,
@@ -169,16 +216,26 @@ mod imp {
     unsafe impl Sync for BridgePipe {}
 
     impl BridgePipe {
-        /// Create the pipe. Fails if the name pre-exists (first-instance) or if
-        /// the DACL/remote-reject setup fails.
+        /// Create the ordinary user+SYSTEM pipe.
         pub fn create(name: &str) -> io::Result<Self> {
-            let sec = PipeSecurity::new()?;
+            Self::create_inner(name, None)
+        }
+
+        /// Create a pipe admitting exactly one additional per-run
+        /// AppContainer SID. The ordinary user+SYSTEM DACL stays unchanged.
+        pub fn create_for_appcontainer(name: &str, confinement: &Confinement) -> io::Result<Self> {
+            Self::create_inner(name, Some(confinement.app_container_sid()))
+        }
+
+        fn create_inner(name: &str, app_container_sid: Option<PSID>) -> io::Result<Self> {
+            let sec = PipeSecurity::new(app_container_sid)?;
             let name_wide = OsStr::new(name)
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect::<Vec<u16>>();
 
-            let open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE;
+            let open_mode =
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED;
             let pipe_mode =
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS;
 
@@ -211,16 +268,7 @@ mod imp {
 
         /// Block until a client connects.
         pub fn connect(&self) -> io::Result<()> {
-            // SAFETY: handle valid; null overlapped → blocking wait.
-            let ok = unsafe { ConnectNamedPipe(self.handle, std::ptr::null_mut()) };
-            if ok == 0 {
-                let e = io::Error::last_os_error();
-                if e.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32) {
-                    return Ok(()); // client already connected
-                }
-                return Err(e);
-            }
-            Ok(())
+            self.connect_timeout(Duration::from_millis(u32::MAX as u64))
         }
 
         /// Block until a client connects, or fail after `timeout`. A bounded
@@ -258,39 +306,19 @@ mod imp {
                 return Err(e);
             }
 
-            let ms = (timeout.as_millis().min(u32::MAX as u128)) as u32;
-            // SAFETY: event valid.
-            let r = unsafe { WaitForSingleObject(event, ms) };
-            match r {
-                WAIT_OBJECT_0 => {
-                    // Confirm the overlapped connect actually succeeded.
-                    let mut transferred = 0u32;
-                    // SAFETY: handle + overlapped valid; non-blocking final query.
-                    let ok = unsafe {
-                        GetOverlappedResult(self.handle, &overlapped, &mut transferred, 0)
-                    };
-                    // SAFETY: event valid.
-                    unsafe { CloseHandle(event) };
-                    if ok == 0 {
-                        Err(io::Error::last_os_error())
-                    } else {
-                        Ok(())
-                    }
-                }
-                WAIT_TIMEOUT => {
-                    // SAFETY: event valid.
-                    unsafe { CloseHandle(event) };
-                    Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "pipe connect timed out",
-                    ))
-                }
-                _ => {
-                    // SAFETY: event valid.
-                    unsafe { CloseHandle(event) };
-                    Err(io::Error::last_os_error())
+            let result = wait_overlapped(self.handle, &overlapped, event, timeout);
+            if result.is_err() {
+                // CancelIoEx is asynchronous; wait for completion before the
+                // stack-backed OVERLAPPED/event can be released.
+                // SAFETY: handle + overlapped stay valid through the wait.
+                unsafe {
+                    CancelIoEx(self.handle, &overlapped);
+                    WaitForSingleObject(event, INFINITE);
                 }
             }
+            // SAFETY: pending I/O is complete or was never started.
+            unsafe { CloseHandle(event) };
+            result.map(|_| ())
         }
 
         /// Read up to `buf.len()` bytes without pinning the duplex handle in a
@@ -321,23 +349,43 @@ mod imp {
                     continue;
                 }
 
-                let mut n = 0u32;
+                let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+                if event.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+                overlapped.hEvent = event;
                 let len = buf.len().min(available as usize) as u32;
-                // SAFETY: handle + buf are valid, and PeekNamedPipe confirmed
-                // that this read can complete without waiting for peer input.
+                // SAFETY: handle, buffer, and OVERLAPPED event are valid.
                 let ok = unsafe {
                     ReadFile(
                         self.handle,
                         buf.as_mut_ptr(),
                         len,
-                        &mut n,
                         std::ptr::null_mut(),
+                        &mut overlapped,
                     )
                 };
                 if ok == 0 {
-                    return Err(io::Error::last_os_error());
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+                        // SAFETY: no pending operation owns the event.
+                        unsafe { CloseHandle(event) };
+                        return Err(error);
+                    }
                 }
-                return Ok(n as usize);
+                let result =
+                    wait_overlapped(self.handle, &overlapped, event, Duration::from_secs(5));
+                if result.is_err() {
+                    // SAFETY: cancel and join pending I/O before dropping OVERLAPPED.
+                    unsafe {
+                        CancelIoEx(self.handle, &overlapped);
+                        WaitForSingleObject(event, INFINITE);
+                    }
+                }
+                // SAFETY: operation completed/cancelled.
+                unsafe { CloseHandle(event) };
+                return result.map(|count| count as usize);
             }
         }
 
@@ -359,23 +407,44 @@ mod imp {
 
         /// Write all bytes.
         pub fn write_all(&self, buf: &[u8]) -> io::Result<()> {
-            let mut n = 0usize;
-            while n < buf.len() {
-                let mut written = 0u32;
-                // SAFETY: handle + buf valid.
+            let mut offset = 0usize;
+            while offset < buf.len() {
+                let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+                if event.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+                overlapped.hEvent = event;
+                // SAFETY: handle, buffer, and OVERLAPPED event are valid.
                 let ok = unsafe {
                     WriteFile(
                         self.handle,
-                        buf[n..].as_ptr(),
-                        (buf.len() - n) as u32,
-                        &mut written,
+                        buf[offset..].as_ptr(),
+                        (buf.len() - offset) as u32,
                         std::ptr::null_mut(),
+                        &mut overlapped,
                     )
                 };
                 if ok == 0 {
-                    return Err(io::Error::last_os_error());
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+                        // SAFETY: no pending operation owns the event.
+                        unsafe { CloseHandle(event) };
+                        return Err(error);
+                    }
                 }
-                n += written as usize;
+                let result =
+                    wait_overlapped(self.handle, &overlapped, event, Duration::from_secs(5));
+                if result.is_err() {
+                    // SAFETY: cancel and join pending I/O before dropping OVERLAPPED.
+                    unsafe {
+                        CancelIoEx(self.handle, &overlapped);
+                        WaitForSingleObject(event, INFINITE);
+                    }
+                }
+                // SAFETY: operation completed/cancelled.
+                unsafe { CloseHandle(event) };
+                offset += result? as usize;
             }
             Ok(())
         }
@@ -398,6 +467,7 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
+    use crate::platform::confinement::Confinement;
     use std::io;
 
     pub struct BridgePipe {
@@ -406,6 +476,12 @@ mod imp {
 
     impl BridgePipe {
         pub fn create(_name: &str) -> io::Result<Self> {
+            Err(unsupported())
+        }
+        pub fn create_for_appcontainer(
+            _name: &str,
+            _confinement: &Confinement,
+        ) -> io::Result<Self> {
             Err(unsupported())
         }
         pub fn name(&self) -> &str {

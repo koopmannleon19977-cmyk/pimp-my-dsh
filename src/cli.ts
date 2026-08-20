@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -36,6 +37,7 @@ interface ParsedArgs {
   force: boolean
   json: boolean
   apply: boolean
+  runtimeOnly: boolean
   passthrough: string[]
 }
 
@@ -69,6 +71,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let force = false
   let json = false
   let apply = false
+  let runtimeOnly = false
   const passthrough: string[] = []
   let forwarding = false
 
@@ -86,6 +89,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       json = true
     } else if (arg === '--apply') {
       apply = true
+    } else if (arg === '--runtime-only') {
+      if (command !== 'doctor') throw new Error(`unknown argument: ${arg}`)
+      runtimeOnly = true
     } else if (command === 'run') {
       passthrough.push(arg)
     } else {
@@ -93,7 +99,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     }
   }
 
-  return { command, profile, force, json, apply, passthrough }
+  return { command, profile, force, json, apply, runtimeOnly, passthrough }
 }
 
 function dshHome(): string {
@@ -107,6 +113,32 @@ function profileSource(profile: string): string {
   return source
 }
 
+function boundaryPath(path: string): string {
+  const candidate = resolve(path)
+  const configuredRoot = process.env.DSH_PIMP_CONFINED_ROOT
+  if (configuredRoot === undefined || configuredRoot.trim() === '') return realpathSync(candidate)
+  const root = resolve(configuredRoot)
+  const fromRoot = relative(root, candidate)
+  if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) {
+    throw new Error(`path escapes confined root: ${candidate}`)
+  }
+  lstatSync(candidate)
+  return candidate
+}
+
+function bundleTargetsPackageRoot(linkedBundle: string): boolean {
+  if (!existsSync(linkedBundle)) return false
+  const configuredRoot = process.env.DSH_PIMP_CONFINED_ROOT
+  if (configuredRoot === undefined || configuredRoot.trim() === '') {
+    return realpathSync(linkedBundle) === realpathSync(packageRoot)
+  }
+  const link = boundaryPath(linkedBundle)
+  const entry = lstatSync(link)
+  if (!entry.isSymbolicLink()) return false
+  const target = resolve(dirname(link), readlinkSync(link))
+  return target === boundaryPath(packageRoot)
+}
+
 function assertContainedPath(home: string, candidate: string): void {
   const lexical = relative(home, candidate)
   if (lexical.startsWith('..') || isAbsolute(lexical)) throw new Error('profile path escapes DSH_HOME')
@@ -117,8 +149,8 @@ function assertContainedPath(home: string, candidate: string): void {
   if (!stats.isDirectory()) throw new Error(`profile path component is not a directory: ${candidate}`)
 
   if (existsSync(home)) {
-    const canonicalHome = realpathSync(home)
-    const canonicalCandidate = realpathSync(candidate)
+    const canonicalHome = boundaryPath(home)
+    const canonicalCandidate = boundaryPath(candidate)
     const canonical = relative(canonicalHome, canonicalCandidate)
     if (canonical.startsWith('..') || isAbsolute(canonical)) {
       throw new Error(`profile path resolves outside DSH_HOME: ${candidate}`)
@@ -392,7 +424,7 @@ function assertManagedProfileDirectory(directory: string, profile: string): void
     throw new Error(`profile patch is not distribution-managed: ${profile}`)
   }
   const linkedBundle = join(directory, 'node_modules', 'pimp-my-dsh')
-  if (!existsSync(linkedBundle) || realpathSync(linkedBundle) !== realpathSync(packageRoot)) {
+  if (!bundleTargetsPackageRoot(linkedBundle)) {
     throw new Error(`profile bundle link is missing or points at another installation: ${profile}`)
   }
 }
@@ -411,10 +443,10 @@ function assertNoGlobalPatch(): void {
 }
 
 function assertConfigurationOutsideWorkspace(profileDirectoryPath: string): void {
-  const workspace = realpathSync(process.cwd())
+  const workspace = boundaryPath(process.cwd())
   for (const [label, path] of [
-    ['harness home', realpathSync(dshHome())],
-    ['profile directory', realpathSync(profileDirectoryPath)],
+    ['harness home', boundaryPath(dshHome())],
+    ['profile directory', boundaryPath(profileDirectoryPath)],
   ] as const) {
     const fromWorkspace = relative(workspace, path)
     if (fromWorkspace === '' || (!fromWorkspace.startsWith('..') && !isAbsolute(fromWorkspace))) {
@@ -779,7 +811,7 @@ function doctor(args: ParsedArgs): void {
     modelConfigured: Boolean(process.env.PIMP_DSH_MODEL),
     lspEnabled: process.env.PIMP_DSH_ENABLE_LSP === '1',
     telemetryEnabled: false,
-    sandboxChecks: sandboxChecks(),
+    sandboxChecks: args.runtimeOnly ? null : sandboxChecks(),
   }, args.json)
 }
 

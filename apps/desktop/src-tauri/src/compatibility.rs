@@ -125,12 +125,25 @@ impl Provider for PackagedProvider {
     }
 }
 
-/// Packaged resolution core, testable with a controlled manifest digest.
-fn resolve_packaged(
-    resource_dir: &Path,
+/// The build-time-pinned manifest digest captured by `build.rs` from the
+/// canonical staged `runtime/manifest.json`. Packaged resolution and runtime
+/// staging both authenticate against this one independent value, never a
+/// manifest's own self-described hashes. Empty (staging has not run) → fail
+/// closed.
+pub(crate) fn expected_manifest_digest() -> &'static str {
+    EXPECTED_MANIFEST_SHA256
+}
+
+/// Verify a rooted runtime exactly like packaged resolution does and derive a
+/// backend-owned `LaunchSpec` (node_exe, CLI entry, cwd under `runtime`) from
+/// it. This is the single helper both `PackagedProvider` and the AppContainer
+/// `Confinement::stage_runtime` path use — the source and the private-root copy
+/// authenticate through the same manifest-digest + payload/node-hash step, and
+/// neither trusts an unpinned manifest.
+pub(crate) fn verified_runtime_root(
+    runtime: &Path,
     expected_manifest_sha256: &str,
 ) -> Result<LaunchSpec, String> {
-    let runtime = packaged_runtime_dir(resource_dir)?;
     let manifest_path = runtime.join("manifest.json");
     let json = std::fs::read_to_string(&manifest_path)
         .map_err(|e| format!("manifest missing at {}: {e}", manifest_path.display()))?;
@@ -159,6 +172,15 @@ fn resolve_packaged(
         env: inherited_env(),
         args: web_argv(),
     })
+}
+
+/// Packaged resolution core, testable with a controlled manifest digest.
+fn resolve_packaged(
+    resource_dir: &Path,
+    expected_manifest_sha256: &str,
+) -> Result<LaunchSpec, String> {
+    let runtime = packaged_runtime_dir(resource_dir)?;
+    verified_runtime_root(&runtime, expected_manifest_sha256)
 }
 
 /// The packaged payload dir: the canonicalized `resource_dir/runtime`. The

@@ -10,7 +10,7 @@ upstream without forking it, and ship a complete desktop supervisor vertical sli
 
 ### CLI distribution
 
-- [x] Consume `@deepseek-ai/dsh@0.1.0-rc.6` as an exact npm dependency.
+- [x] Consume `@deepseek-ai/dsh@0.1.0-rc.7` as an exact npm dependency.
 - [x] Compose upstream bundles through `cordis.patch.yml` by stable id.
 - [x] Ship a distribution-owned plugin with stable prompt/context guidance.
 - [x] Add fixed-operation, read-only Git inspection.
@@ -52,7 +52,7 @@ upstream without forking it, and ship a complete desktop supervisor vertical sli
 - [x] Authority identity: live HANDLE + Job handle + run ID. PID/port/state files
       are diagnostics only — never authorize kill or adoption.
 - [x] Compatibility manifest v1: controller 0.1.0, Node 24.19.0, pnpm 11.7.0,
-      distribution 0.1.0, DSH 0.1.0-rc.6, target x86_64-pc-windows-msvc,
+      distribution 0.1.0, DSH 0.1.0-rc.7, target x86_64-pc-windows-msvc,
       node.exe SHA-256, payload tree hash.
 - [x] Bounded logs with 16 KiB/event limit and secret redaction.
 - [x] Data/log paths under per-user app data directory.
@@ -77,13 +77,20 @@ no-fork decision.
       Playwright Chromium). Per-machine elevated step; enabling automation by
       default stays gated on that step per machine.
 - [ ] Add production read-side confinement on Windows. The current upstream
-      token has no read restriction; `doctor` reports this as unavailable until
-      the real Node payload, DSH home, workspace, temporary directories, hard
-      links, junctions, crashes, and descendants are covered.
-  - [x] Native opt-in AppContainer prototype: per-run profile root, staged
-        fixture/payload, `SECURITY_CAPABILITIES` before resume, outside-read
-        denial, Job/handle-list path, normal and failed-startup cleanup
-        (`tests/confinement_contract_test.rs`; ADR-0004).
+      token has no read restriction; `doctor` remains unavailable.
+  - [x] AppContainer fixture matrix: zero capabilities, outside-read denial,
+        hard-link/junction escapes, Job descendants, crash/start-failure and
+        bounded cleanup (`tests/confinement_contract_test.rs`).
+  - [x] Verified real Node/DSH runtime and runtime-only doctor probe
+        (`tests/runtime_contract_test.rs`).
+  - [x] Physicalized rc.7 web profile, per-run pipe SID, authenticated
+        `hello`/`ready`, and cleanup decision gate
+        (`tests/full_run_confinement_contract_test.rs`).
+  - [x] Production no-go recorded: the zero-capability child advertises a
+        loopback endpoint, but the host receives WSAECONNREFUSED (10061).
+  - [ ] Replace HTTP loopback with an authenticated non-network transport or
+        obtain a narrowly scoped per-run loopback primitive; broad network
+        capability SIDs and machine-wide loopback exemptions are rejected.
 - [x] Add a machine-readable community-plugin review checklist artifact that
       the reviewed allowlist gate consumes (`schema/community-plugin-allowlist-v1`).
 - [x] Add `doctor` checks for the Windows sandbox boundaries (volume
