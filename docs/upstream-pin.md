@@ -1,7 +1,7 @@
 # Upstream version pin
 
 `pimp-my-dsh` pins `@deepseek-ai/dsh` and every direct `@deepseek-ai/dsh-*`
-package to the exact version `0.1.0-rc.6`. Dist-tags and carets are never used
+package to the exact version `0.1.0-rc.7`. Dist-tags and carets are never used
 for these packages.
 
 ## The pin
@@ -166,3 +166,33 @@ these secrets. The release workflow fails closed when a required signing secret
 or attestation permission is missing.
 
 See [ADR-0001](adr/0001-no-fork.md#reassessment-triggers) for the full list.
+
+## Release runbook
+
+The release pipeline was validated end to end on 2026-08-21 against
+`0.1.0` and is documented so a maintainer can reproduce it.
+
+1. **Verify signing secrets** (once, or when they rotate): `gh secret list
+   --repo koopmannleon19977-cmyk/pimp-my-dsh` must show
+   `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`,
+   `CERT_PFX_BASE64`, and `CERT_PFX_PASSWORD`. The first two are set;
+   the two certificate secrets are still required for the first release.
+2. **Preflight locally** (no secrets touched): `node
+   scripts/release-preflight.mjs` must exit 0 with no errors.
+3. **Build and sign locally** (updater signature only, no certificate):
+   `pnpm desktop:bundle`. Expect under
+   `apps/desktop/src-tauri/target/release/bundle/nsis/`:
+   `Pimp my DSH_<version>_x64-setup.exe` and its `.sig`.
+4. **Generate and validate the update manifest** exactly as the workflow
+   does: `latest.json` with `version`, ISO `pub_date`, and
+   `platforms.windows-x86_64` containing the raw `.sig` content and the
+   `releases/latest/download/<url-encoded-exe-name>` URL; the workflow's
+   manifest signature must equal the `.sig` file content.
+5. **Tag and release** (`gh` authenticated, certificate secrets present):
+   tag `v<version>`, push the tag, and let `.github/workflows/release.yml`
+   run. It fails closed if any signing secret or attestation permission is
+   missing, and it refuses version skew before building.
+6. **Verify published assets** with
+   `gh attestation verify <downloaded-asset> --repo
+   koopmannleon19977-cmyk/pimp-my-dsh` and confirm `latest.json` serves from
+   the GitHub Release download endpoint.
